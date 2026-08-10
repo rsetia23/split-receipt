@@ -2686,6 +2686,7 @@
     }
     if (!res.ok) {
       showError(body.error || "The reader failed.",
+        (body.detail ? body.detail + "\n\n" : "") +
         "You can still scan offline on this device, or add the items by hand.");
       return;
     }

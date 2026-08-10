@@ -174,9 +174,16 @@ export default async function handler(req, res) {
       note: typeof parsed.note === "string" && parsed.note.trim() ? parsed.note.trim() : null,
     });
   } catch (err) {
-    const status = err?.status;
-    if (status === 401) return res.status(503).json({ error: "The server's API key was rejected." });
-    if (status === 429) return res.status(429).json({ error: "Rate limited upstream. Try again in a moment." });
-    return res.status(502).json({ error: "Couldn't reach the assistant. Assign by tapping names instead." });
+    const status = Number(err?.status) || 0;
+    const detail = String(err?.message || err || "").slice(0, 400);
+    console.error("[assign] status=%s %s", status || "?", detail);
+
+    if (status === 401 || status === 403) {
+      return res.status(503).json({ error: "The server's API key was rejected.", detail });
+    }
+    if (status === 429) {
+      return res.status(429).json({ error: "Rate limited upstream. Try again in a moment.", detail });
+    }
+    return res.status(502).json({ error: "Couldn't reach the assistant. Assign by tapping names instead.", detail });
   }
 }

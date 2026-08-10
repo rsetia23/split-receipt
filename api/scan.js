@@ -46,13 +46,25 @@ export default async function handler(req, res) {
     if (err instanceof ReaderError) {
       return res.status(err.status).json({ error: err.message });
     }
-    const status = err?.status;
+    // A failure with no cause attached is close to useless. Provider messages
+    // don't contain the key, and this route is passphrase-gated, so surface
+    // the real reason both in the response and the platform log.
+    const status = Number(err?.status) || 0;
+    const detail = String(err?.message || err || "").slice(0, 400);
+    console.error("[scan] engine=%s status=%s %s", engine, status || "?", detail);
+
     if (status === 401 || status === 403) {
-      return res.status(503).json({ error: "The server's API key was rejected." });
+      return res.status(503).json({ error: "The server's API key was rejected.", detail });
+    }
+    if (status === 404) {
+      return res.status(503).json({ error: "That model isn't available on this key.", detail });
+    }
+    if (status === 400) {
+      return res.status(502).json({ error: "The reader rejected the request.", detail });
     }
     if (status === 429) {
-      return res.status(429).json({ error: "Rate limited upstream. Try again in a moment." });
+      return res.status(429).json({ error: "Rate limited upstream. Try again in a moment.", detail });
     }
-    return res.status(502).json({ error: "Couldn't reach the reader. Try again, or scan offline." });
+    return res.status(502).json({ error: "Couldn't reach the reader. Try again, or scan offline.", detail });
   }
 }
