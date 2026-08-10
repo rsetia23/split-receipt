@@ -13,15 +13,18 @@ function hash(value) {
  */
 export function authorize(req) {
   const expected = process.env.SCAN_PASSWORD;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!expected || !apiKey) {
+  const keys = {
+    anthropic: process.env.ANTHROPIC_API_KEY || null,
+    gemini: process.env.GEMINI_API_KEY || null,
+  };
+  if (!expected || !(keys.anthropic || keys.gemini)) {
     return { status: 503, error: "Scanning isn't configured on this deployment yet." };
   }
   const given = req.headers["x-split-pass"];
   if (!given || !timingSafeEqual(hash(given), hash(expected))) {
     return { status: 401, error: "That passphrase isn't right." };
   }
-  return { apiKey };
+  return { keys };
 }
 
 /**

@@ -102,7 +102,10 @@ export default async function handler(req, res) {
     .join("\n");
 
   try {
-    const client = new Anthropic({ apiKey: auth.apiKey });
+    if (!auth.keys.anthropic) {
+      return res.status(503).json({ error: "The assistant isn't configured on this deployment." });
+    }
+    const client = new Anthropic({ apiKey: auth.keys.anthropic });
     const message = await client.messages.create({
       model: MODEL,
       max_tokens: 4096,
