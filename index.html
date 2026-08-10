@@ -690,6 +690,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 10px;
     padding: 12px 16px;
     border-top: 1px solid var(--rule);
@@ -1786,6 +1787,171 @@
     } else { fallback(); }
   }
 
+  // The shared image is deliberately light-themed and self-contained: it gets
+  // pasted into someone else's chat, where our dark palette would read as
+  // broken. Drawn on a canvas rather than screenshotting the DOM so there's
+  // no library and no dependence on how the page happens to be laid out.
+  var IMG = {
+    bg: "#FBFCFA", ink: "#16211F", soft: "#3D4A46", muted: "#6B766F",
+    rule: "#D6DBD2", faint: "#E4E8DF", accent: "#1F6F5C",
+    people: ["#B44A2E", "#2C6BA0", "#6F4FA3", "#8A6A00", "#A03A63", "#0C6E78"],
+  };
+  var SANS = 'ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif';
+  var MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+
+  function colorIndexOf(id) {
+    var i = state.people.findIndex(function (p) { return p.id === id; });
+    return (i < 0 ? 0 : i) % IMG.people.length;
+  }
+
+  function ellipsize(ctx, text, maxWidth) {
+    if (ctx.measureText(text).width <= maxWidth) return text;
+    var t = text;
+    while (t.length > 1 && ctx.measureText(t + "…").width > maxWidth) t = t.slice(0, -1);
+    return t + "…";
+  }
+
+  // Runs twice: once with draw=false to measure the height, once to paint.
+  function paintSummary(ctx, W, r, draw) {
+    var pad = 44, right = W - pad, y = pad;
+
+    var put = function (text, x, font, color, align) {
+      ctx.font = font;
+      if (!draw) return;
+      ctx.fillStyle = color;
+      ctx.textAlign = align || "left";
+      ctx.fillText(text, x, y);
+    };
+    var rule = function (color, dash) {
+      if (!draw) return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 1;
+      ctx.setLineDash(dash || []);
+      ctx.beginPath();
+      ctx.moveTo(pad, y + 0.5);
+      ctx.lineTo(right, y + 0.5);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    };
+
+    y += 18;
+    put("S P L I T", pad, '600 15px ' + SANS, IMG.muted);
+    put(new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
+        right, '13px ' + MONO, IMG.muted, "right");
+
+    y += 52;
+    put(money(r.grand), pad, '700 44px ' + SANS, IMG.accent);
+    put(r.ids.length + (r.ids.length === 1 ? " person" : " people"),
+        right, '14px ' + MONO, IMG.muted, "right");
+
+    y += 24;
+    put("Subtotal " + money(r.assigned) + "   ·   Tax " + money(r.tax) + "   ·   Tip " + money(r.tip),
+        pad, '13px ' + MONO, IMG.muted);
+
+    y += 22;
+    rule(IMG.rule);
+
+    r.ids.forEach(function (id) {
+      var color = IMG.people[colorIndexOf(id)];
+      y += 34;
+
+      if (draw) {
+        ctx.fillStyle = color;
+        ctx.fillRect(pad, y - 15, 4, 20);
+      }
+      put(nameOf(id), pad + 16, '600 20px ' + SANS, color);
+      put(money(r.totals[id]), right, '700 22px ' + SANS, IMG.ink, "right");
+
+      y += 10;
+      ctx.font = '13px ' + MONO;
+      var labelMax = W - pad * 2 - 16 - 110;
+
+      r.lines[id].forEach(function (l) {
+        y += 21;
+        put(ellipsize(ctx, l.label, labelMax), pad + 16, '13px ' + MONO, IMG.muted);
+        put(l.amount.toFixed(2), right, '13px ' + MONO, IMG.muted, "right");
+      });
+
+      y += 12;
+      rule(IMG.faint);
+      y += 20;
+      put("subtotal", pad + 16, '13px ' + MONO, IMG.soft);
+      put(r.subtotals[id].toFixed(2), right, '13px ' + MONO, IMG.soft, "right");
+
+      y += 21;
+      put(ellipsize(ctx, "tax+tip: (" + r.subtotals[id].toFixed(2) + "/" +
+          r.assigned.toFixed(2) + ") * " + r.extra.toFixed(2), labelMax),
+          pad + 16, '13px ' + MONO, IMG.muted);
+      put((r.totals[id] - r.subtotals[id]).toFixed(2), right, '13px ' + MONO, IMG.muted, "right");
+
+      y += 23;
+      put("total", pad + 16, '600 14px ' + MONO, IMG.ink);
+      put(r.totals[id].toFixed(2), right, '600 14px ' + MONO, IMG.ink, "right");
+
+      y += 18;
+      rule(IMG.rule, [3, 4]);
+    });
+
+    y += 30;
+    put("split-gilt-pi.vercel.app", W / 2, '12px ' + MONO, IMG.muted, "center");
+
+    return y + pad - 12;
+  }
+
+  function summaryCanvas() {
+    var r = compute();
+    var W = 880, scale = 2;
+    var probe = document.createElement("canvas").getContext("2d");
+    var H = Math.round(paintSummary(probe, W, r, false));
+
+    var c = document.createElement("canvas");
+    c.width = W * scale;
+    c.height = H * scale;
+    var ctx = c.getContext("2d");
+    ctx.scale(scale, scale);
+    ctx.fillStyle = IMG.bg;
+    ctx.fillRect(0, 0, W, H);
+    ctx.textBaseline = "alphabetic";
+    paintSummary(ctx, W, r, true);
+    return c;
+  }
+
+  async function shareImage() {
+    var canvas;
+    try {
+      canvas = summaryCanvas();
+    } catch (e) {
+      say("Couldn't build the image");
+      return;
+    }
+    var blob = await new Promise(function (resolve) {
+      canvas.toBlob(resolve, "image/png");
+    });
+    if (!blob) { say("Couldn't build the image"); return; }
+
+    var file = null;
+    try { file = new File([blob], "split.png", { type: "image/png" }); } catch (e) {}
+
+    if (file && navigator.canShare && navigator.share && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file] });
+        return;
+      } catch (e) {
+        if (e && e.name === "AbortError") return; // user dismissed
+      }
+    }
+
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "split.png";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 10000);
+    say("Image saved");
+  }
+
   function showShare() {
     var r = compute();
     openSheet();
@@ -1832,13 +1998,20 @@
       sheetBody.appendChild(block);
     });
 
+    var canShareFiles = !!(navigator.canShare && navigator.share);
+
     var copy = el("button", "btn", "Copy text");
     copy.type = "button";
     copy.addEventListener("click", function () { copyText(summaryText(), "Copied"); });
 
-    var foot = [copy];
+    var image = el("button", "btn", canShareFiles ? "Share image" : "Save image");
+    image.type = "button";
+    image.title = "A clean picture of this summary, ready to drop into a chat";
+    image.addEventListener("click", shareImage);
+
+    var foot = [copy, image];
     if (navigator.share) {
-      var share = el("button", "btn btn-solid", "Share");
+      var share = el("button", "btn btn-solid", "Share text");
       share.type = "button";
       share.addEventListener("click", function () {
         navigator.share({ title: "Receipt split", text: summaryText() })
@@ -1846,7 +2019,7 @@
       });
       foot.push(share);
     } else {
-      copy.className = "btn btn-solid";
+      image.className = "btn btn-solid";
     }
     setFoot(foot);
   }
