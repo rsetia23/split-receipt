@@ -1350,7 +1350,7 @@
     if (!state.items.length) {
       itemList.appendChild(el("div", "empty", state.people.length
         ? "No items yet — add the first line off the receipt, or scan it."
-        : "Add the people splitting this receipt first, then the items."));
+        : "Scan the receipt or add items, then describe who had what."));
       return;
     }
     state.items.forEach(function (it, idx) {
@@ -1717,7 +1717,12 @@
   var askBtn = document.getElementById("askBtn");
 
   function renderAsk() {
-    askRow.hidden = !(state.people.length && state.items.length);
+    // Available as soon as there are items — naming people is part of what a
+    // sentence can do, so it must not require people to already exist.
+    askRow.hidden = !state.items.length;
+    askInput.placeholder = state.people.length
+      ? "Who had what? e.g. Arjun and Smyan shared the seafood, we all had dessert"
+      : "Describe the split — e.g. Rahul got the chicken, Arjun and Smyan shared the seafood";
   }
 
   function setAskBusy(busy) {
@@ -1727,10 +1732,23 @@
     askBtn.textContent = busy ? "Reading…" : "Assign";
   }
 
+  var nameKey = function (n) { return String(n || "").trim().toLowerCase(); };
+
   function showAssignPreview(instruction, data) {
     openSheet();
     document.getElementById("sheetTitle").textContent = "Who had what";
     sheetBody.textContent = "";
+
+    // People the sentence introduces don't exist yet, so preview them by the
+    // colour they'd be given once created.
+    var newPeople = (data.newPeople || []).filter(function (name) {
+      return !state.people.some(function (p) { return nameKey(p.name) === nameKey(name); });
+    });
+    var prospectiveColor = function (name) {
+      var i = state.people.findIndex(function (p) { return nameKey(p.name) === nameKey(name); });
+      if (i < 0) i = state.people.length + newPeople.indexOf(name);
+      return PALETTE[(i < 0 ? 0 : i) % PALETTE.length];
+    };
 
     // Only surface entries that actually change something — the model is told
     // to omit untouched items, but an echo of the current state is still a
@@ -1738,20 +1756,38 @@
     var changes = (data.assignments || []).filter(function (a) {
       var it = state.items[a.item];
       if (!it) return false;
-      var next = a.people.map(function (i) { return state.people[i] && state.people[i].id; }).filter(Boolean);
-      var now = it.shared.filter(function (id) { return !!personById(id); });
-      if (next.length !== now.length) return true;
-      return next.some(function (id) { return now.indexOf(id) === -1; });
+      var next = a.people.map(nameKey).sort();
+      var now = it.shared
+        .filter(function (id) { return !!personById(id); })
+        .map(function (id) { return nameKey(nameOf(id)); })
+        .sort();
+      return next.join(" ") !== now.join(" ");
     });
 
     sheetBody.appendChild(el("p", "scan-hint", "“" + instruction + "”"));
 
-    if (!changes.length) {
+    if (newPeople.length) {
+      var add = el("div", "change");
+      add.style.borderTop = "0";
+      add.style.marginTop = "10px";
+      add.appendChild(el("div", "change-name", newPeople.length === 1 ? "New person" : "New people"));
+      var names = el("div", "change-who");
+      newPeople.forEach(function (name, n) {
+        if (n) names.appendChild(document.createTextNode(", "));
+        var b = el("b", null, name);
+        b.style.color = prospectiveColor(name);
+        names.appendChild(b);
+      });
+      add.appendChild(names);
+      sheetBody.appendChild(add);
+    }
+
+    if (!changes.length && !newPeople.length) {
       sheetBody.appendChild(el("p", "scan-hint",
-        data.note || "That didn't change any assignments. Try naming the items more directly."));
-    } else {
+        data.note || "That didn't change anything. Try naming the people and items more directly."));
+    } else if (changes.length) {
       var list = el("div");
-      list.style.marginTop = "14px";
+      list.style.marginTop = newPeople.length ? "4px" : "14px";
       changes.forEach(function (a) {
         var row = el("div", "change");
         row.appendChild(el("div", "change-name", state.items[a.item].name || "Item"));
@@ -1760,12 +1796,10 @@
         if (!a.people.length) {
           who.appendChild(el("span", "none", "nobody"));
         } else {
-          a.people.forEach(function (idx, n) {
-            var p = state.people[idx];
-            if (!p) return;
+          a.people.forEach(function (name, n) {
             if (n) who.appendChild(document.createTextNode(", "));
-            var b = el("b", null, p.name || "Unnamed");
-            b.style.color = colorOf(p.id);
+            var b = el("b", null, name);
+            b.style.color = prospectiveColor(name);
             who.appendChild(b);
           });
         }
@@ -1790,28 +1824,44 @@
       sheetBody.appendChild(el("p", "scan-hint", data.note));
     }
 
-    var cancel = el("button", "btn", changes.length ? "Cancel" : "Back");
+    var total = changes.length + newPeople.length;
+    var cancel = el("button", "btn", total ? "Cancel" : "Back");
     cancel.type = "button";
     cancel.addEventListener("click", closeSheet);
 
     var foot = [cancel];
-    if (changes.length) {
-      var apply = el("button", "btn btn-solid",
-        "Apply " + changes.length + (changes.length === 1 ? " change" : " changes"));
+    if (total) {
+      var label = changes.length
+        ? "Apply " + changes.length + (changes.length === 1 ? " change" : " changes")
+        : "Add " + newPeople.length + (newPeople.length === 1 ? " person" : " people");
+      var apply = el("button", "btn btn-solid", label);
       apply.type = "button";
       apply.addEventListener("click", function () {
+        newPeople.forEach(function (name) {
+          state.people.push({ id: uid(), name: name });
+        });
+
+        var idFor = function (name) {
+          var p = state.people.find(function (q) { return nameKey(q.name) === nameKey(name); });
+          return p ? p.id : null;
+        };
         changes.forEach(function (a) {
           var it = state.items[a.item];
           if (!it) return;
-          it.shared = a.people
-            .map(function (i) { return state.people[i] && state.people[i].id; })
-            .filter(Boolean);
+          it.shared = a.people.map(idFor).filter(Boolean);
         });
+
         renderAll();
+        renderHints();
         save();
         closeSheet();
         askInput.value = "";
-        say("Assigned " + changes.length + (changes.length === 1 ? " item" : " items"));
+        var said = [];
+        if (newPeople.length) said.push("added " + newPeople.length +
+          (newPeople.length === 1 ? " person" : " people"));
+        if (changes.length) said.push("assigned " + changes.length +
+          (changes.length === 1 ? " item" : " items"));
+        say(said.join(", ").replace(/^./, function (c) { return c.toUpperCase(); }));
       });
       foot.push(apply);
     }
@@ -1841,11 +1891,8 @@
               name: it.name || "Item",
               price: num(it.price),
               shared: it.shared
-                .map(function (id) {
-                  var i = state.people.findIndex(function (p) { return p.id === id; });
-                  return i < 0 ? null : i;
-                })
-                .filter(function (i) { return i !== null; }),
+                .filter(function (id) { return !!personById(id); })
+                .map(function (id) { return nameOf(id); }),
             };
           }),
         }),
