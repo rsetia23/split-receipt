@@ -1,0 +1,1900 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Split — receipt splitter</title>
+<meta name="description" content="Split a receipt among friends: assign each item to whoever shared it, and tax and tip get divided in proportion to what everyone actually ordered." />
+<meta name="color-scheme" content="light dark" />
+<meta name="theme-color" content="#F2F4F0" media="(prefers-color-scheme: light)" />
+<meta name="theme-color" content="#121816" media="(prefers-color-scheme: dark)" />
+<meta name="robots" content="noindex" />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>%F0%9F%A7%BE</text></svg>" />
+<style>
+  :root {
+    --paper:      #F2F4F0;
+    --surface:    #FBFCFA;
+    --surface-2:  #EAEEE8;
+    --ink:        #16211F;
+    --ink-soft:   #3D4A46;
+    --muted:      #6B766F;
+    --rule:       #D6DBD2;
+    --rule-soft:  #E4E8DF;
+    --accent:     #1F6F5C;
+    --accent-ink: #FFFFFF;
+    --danger:     #A8402F;
+    --focus:      #1F6F5C;
+
+    --p1: #B44A2E;
+    --p2: #2C6BA0;
+    --p3: #6F4FA3;
+    --p4: #8A6A00;
+    --p5: #A03A63;
+    --p6: #0C6E78;
+    --chip-fg: #FFFFFF;
+
+    --font-ui: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+    --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+    --r: 6px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #121816;
+      --surface:    #1A211E;
+      --surface-2:  #222A27;
+      --ink:        #E8EDE8;
+      --ink-soft:   #B9C2BC;
+      --muted:      #8B968F;
+      --rule:       #333D39;
+      --rule-soft:  #262E2B;
+      --accent:     #57BFA1;
+      --accent-ink: #0B1210;
+      --danger:     #E0806E;
+      --focus:      #57BFA1;
+
+      --p1: #D2664A;
+      --p2: #4A8FC4;
+      --p3: #9174C7;
+      --p4: #B08B1E;
+      --p5: #C25C86;
+      --p6: #2295A1;
+      --chip-fg: #101614;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #121816;
+    --surface:    #1A211E;
+    --surface-2:  #222A27;
+    --ink:        #E8EDE8;
+    --ink-soft:   #B9C2BC;
+    --muted:      #8B968F;
+    --rule:       #333D39;
+    --rule-soft:  #262E2B;
+    --accent:     #57BFA1;
+    --accent-ink: #0B1210;
+    --danger:     #E0806E;
+    --focus:      #57BFA1;
+
+    --p1: #D2664A;
+    --p2: #4A8FC4;
+    --p3: #9174C7;
+    --p4: #B08B1E;
+    --p5: #C25C86;
+    --p6: #2295A1;
+    --chip-fg: #101614;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-ui);
+    font-size: 15px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button, input { font: inherit; color: inherit; }
+
+  :focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  .wrap {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 28px 20px 140px;
+  }
+
+  /* ---------- masthead ---------- */
+
+  .masthead {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  .brand h1 {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+
+  .brand p {
+    margin: 4px 0 0;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 0.02em;
+  }
+
+  .masthead-actions { display: flex; gap: 8px; }
+
+  /* ---------- buttons ---------- */
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 13px;
+    background: transparent;
+    border: 1px solid var(--rule);
+    border-radius: var(--r);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    transition: background-color .12s ease, border-color .12s ease, color .12s ease;
+  }
+  .btn:hover { background: var(--surface-2); color: var(--ink); border-color: var(--muted); }
+  .btn-solid {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--paper);
+  }
+  .btn-solid:hover { background: var(--ink-soft); border-color: var(--ink-soft); color: var(--paper); }
+  .btn-quiet { border-color: transparent; color: var(--muted); padding: 6px 8px; }
+  .btn-quiet:hover { background: var(--surface-2); }
+  .btn-danger:hover { color: var(--danger); border-color: var(--danger); background: transparent; }
+
+  .icon-btn {
+    width: 28px; height: 28px;
+    display: grid; place-items: center;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--r);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 17px;
+    line-height: 1;
+    flex: none;
+  }
+  .icon-btn:hover { color: var(--danger); background: var(--surface-2); }
+
+  /* ---------- layout ---------- */
+
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+    margin-top: 24px;
+  }
+
+  .ledger { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: var(--r);
+    padding: 16px;
+  }
+
+  .panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  /* ---------- people ---------- */
+
+  .people-list { display: flex; flex-wrap: wrap; gap: 8px; }
+
+  .person-tag {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 3px 4px 3px 10px;
+    border: 1px solid var(--rule);
+    border-radius: 999px;
+    background: var(--surface);
+  }
+  .person-tag::before {
+    content: "";
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--c);
+    margin-right: 6px;
+    flex: none;
+  }
+  .person-tag input {
+    border: 0;
+    background: transparent;
+    width: 8ch;
+    min-width: 4ch;
+    padding: 2px 0;
+    font-size: 14px;
+    font-weight: 500;
+  }
+  .person-tag .icon-btn { width: 22px; height: 22px; font-size: 15px; }
+
+  /* ---------- items ---------- */
+
+  .items { display: flex; flex-direction: column; gap: 8px; }
+
+  .item {
+    border: 1px solid var(--rule-soft);
+    border-radius: var(--r);
+    padding: 10px 10px 10px 12px;
+    background: var(--surface);
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+  }
+  .item.orphan { border-color: var(--danger); }
+
+  .item-top {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 100px 28px;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .field {
+    width: 100%;
+    padding: 6px 8px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--r);
+    transition: border-color .12s ease, background-color .12s ease;
+  }
+  .field:hover { border-color: var(--rule-soft); }
+  .field:focus { border-color: var(--rule); background: var(--paper); outline: none; }
+
+  .field-name { font-weight: 500; }
+
+  .field-price {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    border-color: var(--rule-soft);
+  }
+
+  .chiprow { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+  .chip {
+    padding: 3px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--rule);
+    background: transparent;
+    color: var(--muted);
+    font-size: 12.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color .12s ease, color .12s ease, border-color .12s ease;
+  }
+  .chip:hover { border-color: var(--c); color: var(--c); }
+  .chip[aria-pressed="true"] {
+    background: var(--c);
+    border-color: var(--c);
+    color: var(--chip-fg);
+  }
+
+  .chip-all {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    border-style: dashed;
+  }
+  .chip-all:hover { color: var(--ink); border-color: var(--muted); }
+
+  .split-note {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .split-note.warn { color: var(--danger); }
+
+  .empty {
+    padding: 22px 12px;
+    text-align: center;
+    color: var(--muted);
+    font-size: 14px;
+    border: 1px dashed var(--rule);
+    border-radius: var(--r);
+  }
+
+  /* ---------- charges ---------- */
+
+  .charge-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    gap: 14px;
+  }
+
+  .charge label {
+    display: block;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+
+  .charge-input {
+    display: flex;
+    align-items: stretch;
+    border: 1px solid var(--rule);
+    border-radius: var(--r);
+    overflow: hidden;
+  }
+  .charge-input:focus-within { border-color: var(--focus); }
+  .charge-input input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    background: transparent;
+    padding: 7px 10px;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .charge-input input:focus { outline: none; }
+
+  .seg { display: flex; border-left: 1px solid var(--rule); }
+  .seg button {
+    width: 34px;
+    border: 0;
+    background: var(--surface-2);
+    color: var(--muted);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    font-size: 13px;
+  }
+  .seg button + button { border-left: 1px solid var(--rule); }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+
+  .charge-hint {
+    margin: 6px 0 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+  }
+
+  /* ---------- receipt ---------- */
+
+  .receipt {
+    position: sticky;
+    top: 20px;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-bottom: 0;
+    border-radius: var(--r) var(--r) 0 0;
+    padding: 18px 18px 22px;
+    --tw: 12px;
+    -webkit-mask: conic-gradient(from -45deg at bottom, #0000 90deg, #000 0) bottom / var(--tw) 100% repeat-x;
+    mask: conic-gradient(from -45deg at bottom, #0000 90deg, #000 0) bottom / var(--tw) 100% repeat-x;
+  }
+
+  .receipt-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .receipt-head strong {
+    font-size: 15px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .tally { display: flex; flex-direction: column; gap: 2px; padding: 12px 0; }
+  .tally-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+  .tally-row.total {
+    margin-top: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--rule);
+    font-size: 15px;
+    color: var(--ink);
+    font-weight: 600;
+  }
+  .tally-row.total .amt { color: var(--accent); }
+
+  .splits { display: flex; flex-direction: column; gap: 2px; }
+
+  .split {
+    border-top: 1px dashed var(--rule);
+    padding: 10px 0 10px 11px;
+    position: relative;
+  }
+  .split::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 12px; bottom: 12px;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--c);
+  }
+  .split-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .split-name { font-weight: 600; color: var(--c); }
+  .split-amt {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .split-meta {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .lines {
+    margin: 8px 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .lines li {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+  .lines .sub { color: var(--ink-soft); border-top: 1px solid var(--rule-soft); padding-top: 4px; margin-top: 3px; }
+
+  .receipt-foot {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+    letter-spacing: 0.08em;
+  }
+
+  .flag {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border: 1px solid var(--danger);
+    border-radius: var(--r);
+    color: var(--danger);
+    font-size: 12.5px;
+  }
+
+  /* ---------- mobile total bar ---------- */
+
+  .totalbar {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 20px calc(12px + env(safe-area-inset-bottom));
+    background: var(--surface);
+    border-top: 1px solid var(--rule);
+    z-index: 10;
+  }
+  .totalbar .amt {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 19px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  .toast {
+    position: fixed;
+    left: 50%;
+    bottom: 84px;
+    transform: translate(-50%, 12px);
+    padding: 9px 16px;
+    background: var(--ink);
+    color: var(--paper);
+    border-radius: 999px;
+    font-size: 13px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease;
+    z-index: 20;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+  @media (max-width: 860px) {
+    .wrap { padding: 20px 14px 120px; }
+    .layout { grid-template-columns: 1fr; }
+    .receipt { position: static; }
+    .totalbar { display: flex; }
+    .item-top { grid-template-columns: minmax(0, 1fr) 88px 28px; }
+    .brand h1 { font-size: 21px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+
+  /* ---------- scanner ---------- */
+
+  .scrim {
+    position: fixed;
+    inset: 0;
+    background: rgba(8, 12, 11, .55);
+    display: grid;
+    place-items: center;
+    padding: 18px;
+    z-index: 30;
+  }
+  .scrim[hidden] { display: none; }
+
+  .sheet {
+    width: min(560px, 100%);
+    max-height: min(88vh, 760px);
+    display: flex;
+    flex-direction: column;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+
+  .sheet-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .sheet-head strong {
+    font-size: 14px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .sheet-body { padding: 16px; overflow-y: auto; flex: 1; }
+
+  .sheet-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 16px;
+    border-top: 1px solid var(--rule);
+    background: var(--surface);
+  }
+
+  .progress {
+    height: 4px;
+    background: var(--surface-2);
+    border-radius: 999px;
+    overflow: hidden;
+    margin: 14px 0 8px;
+  }
+  .progress span {
+    display: block;
+    height: 100%;
+    width: 0;
+    background: var(--accent);
+    border-radius: 999px;
+    transition: width .25s ease;
+  }
+
+  .scan-status {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--muted);
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .scan-hint {
+    font-size: 13px;
+    color: var(--muted);
+    line-height: 1.5;
+    margin: 0;
+  }
+  .scan-hint + .scan-hint { margin-top: 8px; }
+
+  .drop {
+    border: 1px dashed var(--rule);
+    border-radius: var(--r);
+    padding: 26px 18px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    transition: border-color .12s ease, background-color .12s ease;
+  }
+  .drop.over { border-color: var(--accent); background: var(--surface-2); }
+  .drop-icon { font-size: 30px; line-height: 1; }
+
+  .shot {
+    width: 100%;
+    max-height: 190px;
+    object-fit: contain;
+    object-position: center;
+    border-radius: var(--r);
+    border: 1px solid var(--rule);
+    background: var(--surface-2);
+    display: block;
+    margin-bottom: 14px;
+  }
+
+  .found {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .found li {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) 84px;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 6px;
+    border: 1px solid var(--rule-soft);
+    border-radius: var(--r);
+  }
+  .found li.off { opacity: .45; }
+
+  .found input[type="checkbox"] {
+    width: 16px; height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .found .f-name {
+    border: 1px solid transparent;
+    background: transparent;
+    padding: 4px 6px;
+    border-radius: 4px;
+    width: 100%;
+    font-size: 14px;
+  }
+  .found .f-price {
+    border: 1px solid transparent;
+    background: transparent;
+    padding: 4px 6px;
+    border-radius: 4px;
+    width: 100%;
+    text-align: right;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 14px;
+  }
+  .found .f-name:focus, .found .f-price:focus {
+    outline: none;
+    border-color: var(--rule);
+    background: var(--paper);
+  }
+
+  .detected {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .detected-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 13.5px;
+    color: var(--ink-soft);
+  }
+  .detected-row input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
+  .detected-row .amt {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .reconcile {
+    margin-top: 12px;
+    padding: 9px 11px;
+    border-radius: var(--r);
+    border: 1px solid var(--rule-soft);
+    background: var(--paper);
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--muted);
+  }
+  .reconcile.ok { border-color: var(--accent); color: var(--accent); }
+  .reconcile.off { border-color: var(--danger); color: var(--danger); }
+
+  .raw {
+    margin-top: 12px;
+    font-size: 12.5px;
+    color: var(--muted);
+  }
+  .raw summary { cursor: pointer; }
+  .raw pre {
+    margin: 8px 0 0;
+    padding: 10px;
+    background: var(--paper);
+    border: 1px solid var(--rule-soft);
+    border-radius: var(--r);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    max-height: 180px;
+    overflow: auto;
+    white-space: pre-wrap;
+  }
+
+  .spin {
+    width: 15px; height: 15px;
+    border: 2px solid var(--rule);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin .7s linear infinite;
+    flex: none;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 860px) {
+    .scrim { padding: 0; place-items: end stretch; }
+    .sheet { max-height: 94vh; border-radius: 10px 10px 0 0; border-bottom: 0; }
+    .sheet-foot { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="masthead">
+    <div class="brand">
+      <h1>Split</h1>
+      <p id="stamp">who owes what, to the cent</p>
+    </div>
+    <div class="masthead-actions">
+      <button class="btn" id="copyBtn">Copy summary</button>
+      <button class="btn btn-danger" id="clearBtn">Clear all</button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <div class="ledger">
+
+      <section class="panel">
+        <div class="panel-head">
+          <span class="eyebrow">People</span>
+          <button class="btn" id="addPerson">Add person</button>
+        </div>
+        <div class="people-list" id="peopleList"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <span class="eyebrow">Items</span>
+          <div style="display:flex; gap:8px;">
+            <button class="btn" id="scanBtn">Scan receipt</button>
+            <button class="btn btn-solid" id="addItem">Add item</button>
+          </div>
+        </div>
+        <div class="items" id="itemList"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <span class="eyebrow">Tax &amp; tip</span>
+        </div>
+        <div class="charge-grid">
+          <div class="charge">
+            <label for="taxInput">Tax</label>
+            <div class="charge-input">
+              <input id="taxInput" type="text" inputmode="decimal" data-charge="tax" />
+              <div class="seg">
+                <button type="button" data-mode="tax:amt" aria-pressed="false">$</button>
+                <button type="button" data-mode="tax:pct" aria-pressed="false">%</button>
+              </div>
+            </div>
+            <p class="charge-hint" id="taxHint"></p>
+          </div>
+          <div class="charge">
+            <label for="tipInput">Tip</label>
+            <div class="charge-input">
+              <input id="tipInput" type="text" inputmode="decimal" data-charge="tip" />
+              <div class="seg">
+                <button type="button" data-mode="tip:amt" aria-pressed="false">$</button>
+                <button type="button" data-mode="tip:pct" aria-pressed="false">%</button>
+              </div>
+            </div>
+            <p class="charge-hint" id="tipHint"></p>
+          </div>
+        </div>
+      </section>
+
+    </div>
+
+    <aside class="receipt" id="receipt"></aside>
+  </main>
+</div>
+
+<div class="totalbar">
+  <span class="eyebrow">Grand total</span>
+  <span class="amt" id="barTotal">$0.00</span>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<input type="file" id="fileInput" accept="image/*" hidden />
+
+<div class="scrim" id="scrim" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+    <div class="sheet-head">
+      <strong id="sheetTitle">Scan receipt</strong>
+      <button class="icon-btn" id="sheetClose" aria-label="Close">×</button>
+    </div>
+    <div class="sheet-body" id="sheetBody"></div>
+    <div class="sheet-foot" id="sheetFoot"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var KEY = "split.receipt.v1";
+  var PALETTE = ["var(--p1)", "var(--p2)", "var(--p3)", "var(--p4)", "var(--p5)", "var(--p6)"];
+
+  var uid = function () { return Math.random().toString(36).slice(2, 9); };
+
+  var seed = function () {
+    var a = { id: uid(), name: "Rahul" },
+        b = { id: uid(), name: "Smyan" },
+        c = { id: uid(), name: "Arjun" };
+    var all = [a.id, b.id, c.id];
+    var item = function (name, price, shared) {
+      return { id: uid(), name: name, price: price, shared: shared.slice() };
+    };
+    return {
+      people: [a, b, c],
+      items: [
+        item("Bounty", 31.34, all),
+        item("Cascade", 15.39, all),
+        item("TP", 23.09, all),
+        item("Toilet Cleaner", 8.24, all),
+        item("Tide", 27.49, [a.id, b.id]),
+        item("GY", 8.24, [a.id]),
+        item("Milk", 2.83, [a.id]),
+        item("Eggs", 9.12, [a.id]),
+        item("Vodka", 24.39, all)
+      ],
+      tax: { mode: "amt", value: 18.88 },
+      tip: { mode: "amt", value: 7.51 },
+      open: {}
+    };
+  };
+
+  var state;
+  try {
+    var saved = JSON.parse(localStorage.getItem(KEY));
+    state = saved && Array.isArray(saved.people) ? saved : seed();
+  } catch (e) { state = seed(); }
+  if (!state.open) state.open = {};
+
+  function save() {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+  }
+
+  var money = function (n) {
+    return (n < 0 ? "-$" : "$") + Math.abs(n).toFixed(2);
+  };
+  var num = function (v) {
+    var n = parseFloat(String(v).replace(/[^0-9.\-]/g, ""));
+    return isFinite(n) ? n : 0;
+  };
+  var colorOf = function (id) {
+    var i = state.people.findIndex(function (p) { return p.id === id; });
+    return PALETTE[(i < 0 ? 0 : i) % PALETTE.length];
+  };
+  var personById = function (id) {
+    return state.people.find(function (p) { return p.id === id; });
+  };
+  var nameOf = function (id) {
+    var p = personById(id);
+    return p ? (p.name || "Unnamed") : "?";
+  };
+
+  // ---- the math ----------------------------------------------------------
+  // Each item is split evenly among the people sharing it. Tax and tip are
+  // then allocated in proportion to what each person's items came to.
+  function compute() {
+    var ids = state.people.map(function (p) { return p.id; });
+    var subtotals = {}, lines = {};
+    ids.forEach(function (id) { subtotals[id] = 0; lines[id] = []; });
+
+    state.items.forEach(function (it) {
+      var sharers = it.shared.filter(function (id) { return ids.indexOf(id) !== -1; });
+      if (!sharers.length) return;
+      var each = num(it.price) / sharers.length;
+      sharers.forEach(function (id) {
+        subtotals[id] += each;
+        lines[id].push({
+          label: (it.name || "Item") + (sharers.length > 1 ? " ÷" + sharers.length : ""),
+          amount: each
+        });
+      });
+    });
+
+    var itemsTotal = state.items.reduce(function (s, it) { return s + num(it.price); }, 0);
+    var assigned = ids.reduce(function (s, id) { return s + subtotals[id]; }, 0);
+
+    var tax = state.tax.mode === "pct" ? assigned * num(state.tax.value) / 100 : num(state.tax.value);
+    var tip = state.tip.mode === "pct" ? assigned * num(state.tip.value) / 100 : num(state.tip.value);
+    var extra = tax + tip;
+
+    var totals = {}, shares = {};
+    ids.forEach(function (id) {
+      shares[id] = assigned > 0 ? subtotals[id] / assigned : 0;
+      totals[id] = subtotals[id] + shares[id] * extra;
+    });
+
+    // Largest-remainder rounding so the per-person cents add up to the bill.
+    var grand = Math.round((assigned + extra) * 100);
+    var cents = ids.map(function (id) {
+      var raw = totals[id] * 100;
+      return { id: id, floor: Math.floor(raw), frac: raw - Math.floor(raw) };
+    });
+    var placed = cents.reduce(function (s, c) { return s + c.floor; }, 0);
+    var left = grand - placed;
+    cents.slice().sort(function (x, y) { return y.frac - x.frac; })
+      .forEach(function (c, i) { c.extraCent = i < left ? 1 : 0; });
+    var rounded = {};
+    cents.forEach(function (c) { rounded[c.id] = (c.floor + (c.extraCent || 0)) / 100; });
+
+    var orphans = state.items.filter(function (it) {
+      return !it.shared.filter(function (id) { return ids.indexOf(id) !== -1; }).length;
+    });
+
+    return {
+      ids: ids, subtotals: subtotals, lines: lines, shares: shares,
+      totals: rounded, assigned: assigned, itemsTotal: itemsTotal,
+      tax: tax, tip: tip, extra: extra, grand: assigned + extra, orphans: orphans
+    };
+  }
+
+  // ---- rendering ---------------------------------------------------------
+  var peopleList = document.getElementById("peopleList");
+  var itemList = document.getElementById("itemList");
+  var receipt = document.getElementById("receipt");
+  var barTotal = document.getElementById("barTotal");
+
+  function el(tag, cls, text) {
+    var n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  }
+
+  function renderPeople() {
+    peopleList.textContent = "";
+    if (!state.people.length) {
+      peopleList.appendChild(el("div", "empty", "Add the people splitting this receipt."));
+      return;
+    }
+    state.people.forEach(function (p) {
+      var tag = el("div", "person-tag");
+      tag.style.setProperty("--c", colorOf(p.id));
+
+      var input = document.createElement("input");
+      input.value = p.name;
+      input.setAttribute("aria-label", "Name");
+      input.size = Math.max(4, p.name.length);
+      input.addEventListener("input", function () {
+        p.name = input.value;
+        input.size = Math.max(4, input.value.length);
+        renderItems();
+        renderReceipt();
+        save();
+      });
+      tag.appendChild(input);
+
+      var del = el("button", "icon-btn", "×");
+      del.title = "Remove " + p.name;
+      del.setAttribute("aria-label", "Remove " + p.name);
+      del.addEventListener("click", function () {
+        state.people = state.people.filter(function (q) { return q.id !== p.id; });
+        state.items.forEach(function (it) {
+          it.shared = it.shared.filter(function (id) { return id !== p.id; });
+        });
+        renderAll();
+        save();
+      });
+      tag.appendChild(del);
+
+      peopleList.appendChild(tag);
+    });
+  }
+
+  function renderItems() {
+    itemList.textContent = "";
+    if (!state.items.length) {
+      itemList.appendChild(el("div", "empty", "No items yet — add the first line off the receipt."));
+      return;
+    }
+    state.items.forEach(function (it, idx) {
+      var row = el("div", "item");
+      var sharers = it.shared.filter(function (id) { return !!personById(id); });
+      if (!sharers.length) row.classList.add("orphan");
+
+      var top = el("div", "item-top");
+
+      var name = document.createElement("input");
+      name.className = "field field-name";
+      name.value = it.name;
+      name.placeholder = "Item";
+      name.setAttribute("aria-label", "Item name");
+      name.addEventListener("input", function () { it.name = name.value; renderReceipt(); save(); });
+      name.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && idx === state.items.length - 1) addItem();
+      });
+      top.appendChild(name);
+
+      var price = document.createElement("input");
+      price.className = "field field-price";
+      price.type = "text";
+      price.inputMode = "decimal";
+      price.value = it.price === "" ? "" : Number(it.price).toFixed(2);
+      price.placeholder = "0.00";
+      price.setAttribute("aria-label", "Price");
+      price.addEventListener("input", function () {
+        it.price = num(price.value);
+        updateNote(row, it);
+        renderReceipt();
+        save();
+      });
+      price.addEventListener("blur", function () {
+        price.value = Number(num(price.value)).toFixed(2);
+      });
+      price.addEventListener("focus", function () { price.select(); });
+      top.appendChild(price);
+
+      var del = el("button", "icon-btn", "×");
+      del.title = "Remove item";
+      del.setAttribute("aria-label", "Remove item");
+      del.addEventListener("click", function () {
+        state.items = state.items.filter(function (x) { return x.id !== it.id; });
+        renderItems();
+        renderReceipt();
+        save();
+      });
+      top.appendChild(del);
+
+      row.appendChild(top);
+
+      var chips = el("div", "chiprow");
+      state.people.forEach(function (p) {
+        var on = it.shared.indexOf(p.id) !== -1;
+        var chip = el("button", "chip", p.name || "Unnamed");
+        chip.type = "button";
+        chip.style.setProperty("--c", colorOf(p.id));
+        chip.setAttribute("aria-pressed", on ? "true" : "false");
+        chip.addEventListener("click", function () {
+          var i = it.shared.indexOf(p.id);
+          if (i === -1) it.shared.push(p.id); else it.shared.splice(i, 1);
+          chip.setAttribute("aria-pressed", i === -1 ? "true" : "false");
+          row.classList.toggle("orphan", !it.shared.filter(function (id) { return !!personById(id); }).length);
+          updateNote(row, it);
+          renderReceipt();
+          save();
+        });
+        chips.appendChild(chip);
+      });
+
+      if (state.people.length) {
+        var all = el("button", "chip chip-all");
+        all.type = "button";
+        all.textContent = "Everyone";
+        all.addEventListener("click", function () {
+          var everyone = state.people.length && state.people.every(function (p) {
+            return it.shared.indexOf(p.id) !== -1;
+          });
+          it.shared = everyone ? [] : state.people.map(function (p) { return p.id; });
+          renderItems();
+          renderReceipt();
+          save();
+        });
+        chips.appendChild(all);
+      }
+
+      var note = el("span", "split-note");
+      chips.appendChild(note);
+      row.appendChild(chips);
+      itemList.appendChild(row);
+      updateNote(row, it);
+    });
+  }
+
+  function updateNote(row, it) {
+    var note = row.querySelector(".split-note");
+    if (!note) return;
+    var n = it.shared.filter(function (id) { return !!personById(id); }).length;
+    if (!n) {
+      note.textContent = "unassigned";
+      note.classList.add("warn");
+    } else {
+      note.classList.remove("warn");
+      note.textContent = n > 1 ? money(num(it.price) / n) + " each" : "";
+    }
+  }
+
+  function renderCharges() {
+    ["tax", "tip"].forEach(function (k) {
+      var input = document.querySelector('[data-charge="' + k + '"]');
+      if (document.activeElement !== input) {
+        input.value = state[k].value === 0 ? "" : String(state[k].value);
+      }
+      input.placeholder = state[k].mode === "pct" ? "0" : "0.00";
+      document.querySelectorAll('[data-mode^="' + k + ':"]').forEach(function (b) {
+        b.setAttribute("aria-pressed", b.dataset.mode === k + ":" + state[k].mode ? "true" : "false");
+      });
+    });
+  }
+
+  function renderReceipt() {
+    var r = compute();
+
+    receipt.textContent = "";
+
+    var head = el("div", "receipt-head");
+    head.appendChild(el("strong", null, "The damage"));
+    head.appendChild(el("span", "eyebrow", state.people.length + (state.people.length === 1 ? " person" : " people")));
+    receipt.appendChild(head);
+
+    var tally = el("div", "tally");
+    var line = function (label, amount, cls) {
+      var row = el("div", "tally-row" + (cls ? " " + cls : ""));
+      row.appendChild(el("span", null, label));
+      row.appendChild(el("span", "amt", money(amount)));
+      tally.appendChild(row);
+    };
+    line("Subtotal", r.assigned);
+    line("Tax" + (state.tax.mode === "pct" ? " (" + num(state.tax.value) + "%)" : ""), r.tax);
+    line("Tip" + (state.tip.mode === "pct" ? " (" + num(state.tip.value) + "%)" : ""), r.tip);
+    line("Total", r.grand, "total");
+    receipt.appendChild(tally);
+
+    if (r.orphans.length) {
+      receipt.appendChild(el("div", "flag",
+        r.orphans.length + (r.orphans.length === 1 ? " item isn't" : " items aren't") +
+        " assigned to anyone, so it's left out of the total."));
+    }
+
+    var splits = el("div", "splits");
+    if (!r.ids.length) {
+      splits.appendChild(el("div", "empty", "Add people to see the split."));
+    }
+    r.ids.forEach(function (id) {
+      var box = el("div", "split");
+      box.style.setProperty("--c", colorOf(id));
+
+      var h = el("div", "split-head");
+      h.setAttribute("role", "button");
+      h.tabIndex = 0;
+      var open = !!state.open[id];
+      h.setAttribute("aria-expanded", open ? "true" : "false");
+
+      var left = el("div");
+      left.appendChild(el("div", "split-name", nameOf(id)));
+      left.appendChild(el("div", "split-meta",
+        r.lines[id].length + (r.lines[id].length === 1 ? " item" : " items") +
+        " · " + Math.round(r.shares[id] * 100) + "% of tax+tip"));
+      h.appendChild(left);
+      h.appendChild(el("div", "split-amt", money(r.totals[id])));
+
+      var toggle = function () {
+        state.open[id] = !state.open[id];
+        renderReceipt();
+        save();
+      };
+      h.addEventListener("click", toggle);
+      h.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+      });
+      box.appendChild(h);
+
+      if (open) {
+        var ul = el("ul", "lines");
+        r.lines[id].forEach(function (l) {
+          var li = document.createElement("li");
+          li.appendChild(el("span", null, l.label));
+          li.appendChild(el("span", null, money(l.amount)));
+          ul.appendChild(li);
+        });
+        var sub = document.createElement("li");
+        sub.className = "sub";
+        sub.appendChild(el("span", null, "subtotal"));
+        sub.appendChild(el("span", null, money(r.subtotals[id])));
+        ul.appendChild(sub);
+        var ex = document.createElement("li");
+        ex.appendChild(el("span", null, "tax + tip × " + Math.round(r.shares[id] * 100) + "%"));
+        ex.appendChild(el("span", null, money(r.totals[id] - r.subtotals[id])));
+        ul.appendChild(ex);
+        box.appendChild(ul);
+      }
+
+      splits.appendChild(box);
+    });
+    receipt.appendChild(splits);
+
+    receipt.appendChild(el("div", "receipt-foot", "— THANK YOU —"));
+
+    barTotal.textContent = money(r.grand);
+  }
+
+  function renderAll() {
+    renderPeople();
+    renderItems();
+    renderCharges();
+    renderReceipt();
+  }
+
+  // ---- actions -----------------------------------------------------------
+  function addItem() {
+    state.items.push({
+      id: uid(),
+      name: "",
+      price: 0,
+      shared: state.people.map(function (p) { return p.id; })
+    });
+    renderItems();
+    renderReceipt();
+    save();
+    var inputs = itemList.querySelectorAll(".field-name");
+    if (inputs.length) inputs[inputs.length - 1].focus();
+  }
+
+  document.getElementById("addItem").addEventListener("click", addItem);
+
+  document.getElementById("addPerson").addEventListener("click", function () {
+    state.people.push({ id: uid(), name: "Person " + (state.people.length + 1) });
+    renderAll();
+    save();
+    var inputs = peopleList.querySelectorAll("input");
+    if (inputs.length) { var last = inputs[inputs.length - 1]; last.focus(); last.select(); }
+  });
+
+  document.getElementById("clearBtn").addEventListener("click", function () {
+    if (!confirm("Clear every person, item, and charge?")) return;
+    state = { people: [], items: [], tax: { mode: "amt", value: 0 }, tip: { mode: "amt", value: 0 }, open: {} };
+    renderAll();
+    save();
+  });
+
+  document.querySelectorAll("[data-charge]").forEach(function (input) {
+    input.addEventListener("input", function () {
+      var k = input.dataset.charge;
+      state[k].value = num(input.value);
+      renderReceipt();
+      renderHints();
+      save();
+    });
+  });
+
+  document.querySelectorAll("[data-mode]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var parts = btn.dataset.mode.split(":");
+      state[parts[0]].mode = parts[1];
+      renderCharges();
+      renderReceipt();
+      renderHints();
+      save();
+    });
+  });
+
+  function renderHints() {
+    var r = compute();
+    document.getElementById("taxHint").textContent =
+      state.tax.mode === "pct" ? "= " + money(r.tax) : (r.assigned > 0 ? (r.tax / r.assigned * 100).toFixed(2) + "% of subtotal" : "");
+    document.getElementById("tipHint").textContent =
+      state.tip.mode === "pct" ? "= " + money(r.tip) : (r.assigned > 0 ? (r.tip / r.assigned * 100).toFixed(2) + "% of subtotal" : "");
+  }
+
+  var toast = document.getElementById("toast");
+  var toastTimer;
+  function say(msg) {
+    toast.textContent = msg;
+    toast.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toast.classList.remove("show"); }, 1900);
+  }
+
+  document.getElementById("copyBtn").addEventListener("click", function () {
+    var r = compute();
+    var out = ["Receipt split — " + money(r.grand) + " total",
+               "Subtotal " + money(r.assigned) + "  ·  Tax " + money(r.tax) + "  ·  Tip " + money(r.tip), ""];
+    r.ids.forEach(function (id) {
+      out.push(nameOf(id) + ": " + money(r.totals[id]));
+      r.lines[id].forEach(function (l) { out.push("  " + l.label + " " + money(l.amount)); });
+      out.push("  subtotal " + money(r.subtotals[id]) +
+               " + tax/tip " + money(r.totals[id] - r.subtotals[id]));
+      out.push("");
+    });
+    var text = out.join("\n").trim();
+
+    var done = function () { say("Summary copied"); };
+    var fallback = function () {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand("copy"); done(); }
+      catch (e) { say("Couldn't copy — select the receipt and copy manually"); }
+      document.body.removeChild(ta);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, fallback);
+    } else { fallback(); }
+  });
+
+  document.getElementById("stamp").textContent =
+    new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }).toLowerCase() +
+    " · who owes what, to the cent";
+
+  // ---- receipt scanning --------------------------------------------------
+  // OCR runs entirely in this browser via tesseract.js. Nothing is uploaded.
+  // OCR on thermal paper is imperfect by nature, so the scan never writes
+  // straight into the ledger — it proposes rows you confirm and correct.
+
+  var TESSERACT_SRC = "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js";
+
+  var scrim = document.getElementById("scrim");
+  var sheetBody = document.getElementById("sheetBody");
+  var sheetFoot = document.getElementById("sheetFoot");
+  var fileInput = document.getElementById("fileInput");
+  var lastFocus = null;
+  var tessLoad = null;
+  var worker = null;
+
+  function loadTesseract() {
+    if (window.Tesseract) return Promise.resolve(window.Tesseract);
+    if (tessLoad) return tessLoad;
+    tessLoad = new Promise(function (resolve, reject) {
+      var s = document.createElement("script");
+      s.src = TESSERACT_SRC;
+      s.async = true;
+      s.onload = function () {
+        window.Tesseract ? resolve(window.Tesseract) : reject(new Error("loaded but empty"));
+      };
+      s.onerror = function () { reject(new Error("blocked")); };
+      document.head.appendChild(s);
+    });
+    tessLoad.catch(function () { tessLoad = null; });
+    return tessLoad;
+  }
+
+  function openSheet() {
+    lastFocus = document.activeElement;
+    scrim.hidden = false;
+    document.body.style.overflow = "hidden";
+  }
+  function closeSheet() {
+    scrim.hidden = true;
+    document.body.style.overflow = "";
+    sheetBody.textContent = "";
+    sheetFoot.textContent = "";
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+
+  document.getElementById("sheetClose").addEventListener("click", closeSheet);
+  scrim.addEventListener("click", function (e) { if (e.target === scrim) closeSheet(); });
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && !scrim.hidden) closeSheet();
+  });
+
+  // -- image prep: OCR does much better on a big, high-contrast, flat image --
+  function loadBitmap(file) {
+    if (window.createImageBitmap) {
+      return createImageBitmap(file, { imageOrientation: "from-image" })
+        .catch(function () { return createImageBitmap(file); });
+    }
+    return new Promise(function (resolve, reject) {
+      var img = new Image();
+      img.onload = function () { resolve(img); };
+      img.onerror = reject;
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
+  function otsu(hist, total) {
+    var sum = 0, i;
+    for (i = 0; i < 256; i++) sum += i * hist[i];
+    var sumB = 0, wB = 0, best = 0, thresh = 128;
+    for (i = 0; i < 256; i++) {
+      wB += hist[i];
+      if (!wB) continue;
+      var wF = total - wB;
+      if (!wF) break;
+      sumB += i * hist[i];
+      var mB = sumB / wB, mF = (sum - sumB) / wF;
+      var between = wB * wF * (mB - mF) * (mB - mF);
+      if (between > best) { best = between; thresh = i; }
+    }
+    return thresh;
+  }
+
+  async function preprocess(file) {
+    var bmp = await loadBitmap(file);
+    var w = bmp.width, h = bmp.height;
+    // Receipts are tall and thin; aim for a width OCR is comfortable with.
+    var scale = 1;
+    if (w > 1800) scale = 1800 / w;
+    else if (w < 1000) scale = Math.min(2.5, 1000 / w);
+
+    var cw = Math.round(w * scale), ch = Math.round(h * scale);
+    var c = document.createElement("canvas");
+    c.width = cw; c.height = ch;
+    var ctx = c.getContext("2d", { willReadFrequently: true });
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bmp, 0, 0, cw, ch);
+    if (bmp.close) bmp.close();
+
+    var img = ctx.getImageData(0, 0, cw, ch);
+    var d = img.data;
+    var hist = new Uint32Array(256);
+    var i, g;
+    for (i = 0; i < d.length; i += 4) {
+      g = (d[i] * 0.299 + d[i + 1] * 0.587 + d[i + 2] * 0.114) | 0;
+      d[i] = d[i + 1] = d[i + 2] = g;
+      hist[g]++;
+    }
+    var t = otsu(hist, cw * ch);
+    // Soft threshold: push toward black/white but keep a little grey so thin
+    // thermal strokes don't disappear entirely.
+    var lo = Math.max(0, t - 28), hi = Math.min(255, t + 28);
+    for (i = 0; i < d.length; i += 4) {
+      g = d[i];
+      var v = g <= lo ? 0 : g >= hi ? 255 : Math.round((g - lo) / (hi - lo) * 255);
+      d[i] = d[i + 1] = d[i + 2] = v;
+    }
+    ctx.putImageData(img, 0, 0);
+    return c;
+  }
+
+  // -- turning OCR text into candidate rows --------------------------------
+  var NOISE = /(sub\s*-?\s*total|total|balance|amount\s+due|tax|tip|gratuity|change|cash|debit|credit|visa|master|amex|discover|card\b|acct|account|auth|approv|\bref\b|tender|payment|savings|coupon|loyalty|member|reward|points|thank|welcome|receipt|invoice|survey|cashier|register|server|table|guest|\bqty\b|items? sold|item count|www\.|\.com|http|store\s*#|tel\b|phone)/i;
+  var PRICE_AT_END = /(-?\$?\s*\d{1,4}[.,]\d{2})\s*[A-Za-z]{0,2}$/;
+
+  function toNumber(raw) {
+    return num(String(raw).replace(/[^0-9.,\-]/g, "").replace(",", "."));
+  }
+
+  function parseReceipt(text) {
+    var lines = text.split(/\r?\n/);
+    var items = [], found = { tax: null, tip: null, total: null, subtotal: null };
+
+    lines.forEach(function (rawLine) {
+      var line = rawLine.replace(/\s+/g, " ").trim();
+      if (line.length < 4) return;
+
+      var m = line.match(PRICE_AT_END);
+      if (!m) return;
+      var price = toNumber(m[1]);
+      var label = line.slice(0, m.index).trim();
+
+      if (NOISE.test(line)) {
+        // Pull the useful totals out of the lines we're otherwise ignoring.
+        if (/\btips?\b|gratuity/i.test(line) && found.tip === null) found.tip = price;
+        else if (/\btax\b/i.test(line) && !/taxable/i.test(line) && found.tax === null) found.tax = price;
+        else if (/sub\s*-?\s*total/i.test(line) && found.subtotal === null) found.subtotal = price;
+        else if (/total/i.test(line)) found.total = price;
+        return;
+      }
+
+      label = label
+        .replace(/^\d{5,}\s*/, "")            // leading barcode / PLU
+        .replace(/\s*\d+\s*@\s*[\d.,]+$/, "") // "2 @ 1.99" tail
+        .replace(/[\s.\-–—:*_]+$/, "")
+        .replace(/^[\s.\-–—:*_]+/, "")
+        .trim();
+
+      if ((label.match(/[A-Za-z]/g) || []).length < 2) return;
+      if (!(price > 0) || price > 2000) return;
+
+      items.push({
+        name: label.length > 40 ? label.slice(0, 40).trim() : label,
+        price: price,
+        use: true
+      });
+    });
+
+    return { items: items, found: found, raw: text };
+  }
+
+  // -- sheet states ---------------------------------------------------------
+  function setFoot(nodes) {
+    sheetFoot.textContent = "";
+    nodes.forEach(function (n) { sheetFoot.appendChild(n); });
+  }
+
+  function showPick() {
+    sheetBody.textContent = "";
+
+    var drop = el("div", "drop");
+    drop.appendChild(el("div", "drop-icon", "🧾"));
+    var pick = el("button", "btn btn-solid", "Choose a photo");
+    pick.type = "button";
+    pick.addEventListener("click", function () { fileInput.click(); });
+    drop.appendChild(pick);
+    drop.appendChild(el("p", "scan-hint", "or drag one here, or paste from your clipboard"));
+    sheetBody.appendChild(drop);
+
+    ["dragenter", "dragover"].forEach(function (ev) {
+      drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add("over"); });
+    });
+    ["dragleave", "drop"].forEach(function (ev) {
+      drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove("over"); });
+    });
+    drop.addEventListener("drop", function (e) {
+      var f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) handleFile(f);
+    });
+
+    var tips = el("div");
+    tips.style.marginTop = "16px";
+    tips.appendChild(el("p", "scan-hint",
+      "Reading happens on your phone — the photo is never uploaded anywhere."));
+    tips.appendChild(el("p", "scan-hint",
+      "Best results: flatten the receipt, shoot straight down in good light, and crop to just the item list. Thermal paper that's creased or faded will come out rough — you'll get a chance to fix every line before anything is added."));
+    sheetBody.appendChild(tips);
+
+    setFoot([]);
+  }
+
+  function showWork() {
+    sheetBody.textContent = "";
+    var wrap = el("div");
+    var status = el("div", "scan-status");
+    var label = el("span", null, "Starting…");
+    var pct = el("span", null, "");
+    status.appendChild(label);
+    status.appendChild(pct);
+    var bar = el("div", "progress");
+    var fill = document.createElement("span");
+    bar.appendChild(fill);
+    wrap.appendChild(bar);
+    wrap.appendChild(status);
+    wrap.appendChild(el("p", "scan-hint",
+      "First scan downloads the recognizer (about 15 MB) — after that it's cached and starts instantly."));
+    sheetBody.appendChild(wrap);
+    setFoot([]);
+    return function (text, ratio) {
+      label.textContent = text;
+      if (ratio == null) { pct.textContent = ""; fill.style.width = "0%"; }
+      else {
+        pct.textContent = Math.round(ratio * 100) + "%";
+        fill.style.width = (ratio * 100).toFixed(1) + "%";
+      }
+    };
+  }
+
+  function showError(title, detail) {
+    sheetBody.textContent = "";
+    sheetBody.appendChild(el("p", "scan-hint", title));
+    if (detail) {
+      var d = el("p", "scan-hint", detail);
+      d.style.color = "var(--danger)";
+      sheetBody.appendChild(d);
+    }
+    var again = el("button", "btn", "Try another photo");
+    again.type = "button";
+    again.addEventListener("click", showPick);
+    var manual = el("button", "btn btn-solid", "Add items by hand");
+    manual.type = "button";
+    manual.addEventListener("click", function () { closeSheet(); addItem(); });
+    setFoot([again, manual]);
+  }
+
+  function showReview(result, previewCanvas) {
+    sheetBody.textContent = "";
+
+    var shot = document.createElement("img");
+    shot.className = "shot";
+    shot.alt = "The processed image the scanner read";
+    shot.src = previewCanvas.toDataURL("image/jpeg", 0.7);
+    sheetBody.appendChild(shot);
+
+    if (!result.items.length) {
+      sheetBody.appendChild(el("p", "scan-hint",
+        "No item lines came through clearly. That usually means the photo is angled, dim, or too small — a straight-on shot cropped to the item list works best."));
+      addRawBlock();
+      var retry = el("button", "btn", "Try another photo");
+      retry.type = "button";
+      retry.addEventListener("click", showPick);
+      var byHand = el("button", "btn btn-solid", "Add items by hand");
+      byHand.type = "button";
+      byHand.addEventListener("click", function () { closeSheet(); addItem(); });
+      setFoot([retry, byHand]);
+      return;
+    }
+
+    sheetBody.appendChild(el("p", "scan-hint",
+      "Check the lines below — untick anything that isn't an item, and fix any prices OCR got wrong."));
+
+    var list = el("ul", "found");
+    list.style.marginTop = "12px";
+    result.items.forEach(function (row) {
+      var li = document.createElement("li");
+
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = row.use;
+      cb.setAttribute("aria-label", "Include this line");
+      cb.addEventListener("change", function () {
+        row.use = cb.checked;
+        li.classList.toggle("off", !cb.checked);
+        countUp();
+      });
+      li.appendChild(cb);
+
+      var nm = document.createElement("input");
+      nm.className = "f-name";
+      nm.value = row.name;
+      nm.setAttribute("aria-label", "Item name");
+      nm.addEventListener("input", function () { row.name = nm.value; });
+      li.appendChild(nm);
+
+      var pr = document.createElement("input");
+      pr.className = "f-price";
+      pr.type = "text";
+      pr.inputMode = "decimal";
+      pr.value = row.price.toFixed(2);
+      pr.setAttribute("aria-label", "Price");
+      pr.addEventListener("input", function () { row.price = num(pr.value); countUp(); });
+      pr.addEventListener("focus", function () { pr.select(); });
+      li.appendChild(pr);
+
+      list.appendChild(li);
+    });
+    sheetBody.appendChild(list);
+
+    var recon = el("div", "reconcile");
+    sheetBody.appendChild(recon);
+
+    var f = result.found;
+    var applyTax = { on: f.tax != null }, applyTip = { on: f.tip != null };
+    if (f.tax != null || f.tip != null) {
+      var det = el("div", "detected");
+      det.appendChild(el("div", "eyebrow", "Also spotted"));
+      var chargeRow = function (label, value, flag) {
+        var r = el("label", "detected-row");
+        var cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = true;
+        cb.addEventListener("change", function () { flag.on = cb.checked; });
+        r.appendChild(cb);
+        r.appendChild(el("span", null, label));
+        r.appendChild(el("span", "amt", money(value)));
+        det.appendChild(r);
+      };
+      if (f.tax != null) chargeRow("Use this as tax", f.tax, applyTax);
+      if (f.tip != null) chargeRow("Use this as tip", f.tip, applyTip);
+      sheetBody.appendChild(det);
+    }
+
+    addRawBlock();
+
+    function addRawBlock() {
+      var det = document.createElement("details");
+      det.className = "raw";
+      var sum = document.createElement("summary");
+      sum.textContent = "Show the raw text OCR read";
+      det.appendChild(sum);
+      var pre = document.createElement("pre");
+      pre.textContent = result.raw.trim() || "(nothing)";
+      det.appendChild(pre);
+      sheetBody.appendChild(det);
+    }
+
+    var back = el("button", "btn", "Different photo");
+    back.type = "button";
+    back.addEventListener("click", showPick);
+
+    var add = el("button", "btn btn-solid", "");
+    add.type = "button";
+    add.addEventListener("click", function () {
+      var picked = result.items.filter(function (r) { return r.use && num(r.price) > 0; });
+      picked.forEach(function (r) {
+        state.items.push({
+          id: uid(),
+          name: r.name || "Item",
+          price: num(r.price),
+          shared: state.people.map(function (p) { return p.id; })
+        });
+      });
+      if (f.tax != null && applyTax.on) state.tax = { mode: "amt", value: f.tax };
+      if (f.tip != null && applyTip.on) state.tip = { mode: "amt", value: f.tip };
+      renderAll();
+      renderHints();
+      save();
+      closeSheet();
+      say("Added " + picked.length + (picked.length === 1 ? " item" : " items") + " — assigned to everyone");
+    });
+
+    function countUp() {
+      var live = result.items.filter(function (r) { return r.use && num(r.price) > 0; });
+      var n = live.length;
+      add.textContent = n ? "Add " + n + (n === 1 ? " item" : " items") : "Nothing selected";
+      add.disabled = !n;
+      add.style.opacity = n ? "1" : ".5";
+
+      // Cross-check against the subtotal printed on the receipt — the fastest
+      // way to catch a price OCR misread before it reaches the split.
+      var sum = live.reduce(function (s, r) { return s + num(r.price); }, 0);
+      recon.classList.remove("ok", "off");
+      if (f.subtotal == null) {
+        recon.textContent = "Selected lines add up to " + money(sum) +
+          ". No printed subtotal was found to check that against.";
+      } else {
+        var diff = sum - f.subtotal;
+        if (Math.abs(diff) < 0.005) {
+          recon.classList.add("ok");
+          recon.textContent = "Adds up to " + money(sum) +
+            ", matching the subtotal printed on the receipt.";
+        } else {
+          recon.classList.add("off");
+          recon.textContent = "Selected lines add up to " + money(sum) +
+            ", but the receipt says " + money(f.subtotal) + " — off by " +
+            money(Math.abs(diff)) + ". Check for a misread price or a missing line.";
+        }
+      }
+    }
+    countUp();
+
+    setFoot([back, add]);
+  }
+
+  async function handleFile(file) {
+    if (!file || !/^image\//.test(file.type)) {
+      showError("That file isn't an image.", "Pick a photo of the receipt — JPEG, PNG, or HEIC.");
+      return;
+    }
+    var setProgress = showWork();
+    var canvas;
+    try {
+      setProgress("Preparing the image…", null);
+      canvas = await preprocess(file);
+    } catch (e) {
+      showError("Couldn't read that image.", String(e && e.message || e));
+      return;
+    }
+
+    var Tess;
+    try {
+      setProgress("Loading the recognizer…", null);
+      Tess = await loadTesseract();
+    } catch (e) {
+      showError(
+        "The text recognizer couldn't load.",
+        "It's fetched from a CDN on first use, so this needs a network connection — and it won't run inside a preview that blocks outside scripts. The hosted site is the place to use scanning."
+      );
+      return;
+    }
+
+    try {
+      if (!worker) {
+        worker = await Tess.createWorker("eng", 1, {
+          logger: function (m) {
+            var label = /recogniz/i.test(m.status) ? "Reading the receipt…"
+              : /download|load|fetch/i.test(m.status) ? "Loading the recognizer…"
+              : /initial/i.test(m.status) ? "Warming up…"
+              : m.status;
+            setProgress(label, typeof m.progress === "number" ? m.progress : null);
+          }
+        });
+        await worker.setParameters({ tessedit_pageseg_mode: "6" });
+      } else {
+        setProgress("Reading the receipt…", 0.1);
+      }
+
+      var res = await worker.recognize(canvas);
+      var parsed = parseReceipt(res.data.text || "");
+      showReview(parsed, canvas);
+    } catch (e) {
+      if (worker) { try { await worker.terminate(); } catch (x) {} worker = null; }
+      showError("The scan failed partway through.", String(e && e.message || e));
+    }
+  }
+
+  fileInput.addEventListener("change", function () {
+    var f = fileInput.files && fileInput.files[0];
+    fileInput.value = "";
+    if (f) handleFile(f);
+  });
+
+  document.getElementById("scanBtn").addEventListener("click", function () {
+    openSheet();
+    showPick();
+  });
+
+  document.addEventListener("paste", function (e) {
+    if (scrim.hidden) return;
+    var items = e.clipboardData && e.clipboardData.items;
+    if (!items) return;
+    for (var i = 0; i < items.length; i++) {
+      if (items[i].type.indexOf("image") === 0) {
+        var f = items[i].getAsFile();
+        if (f) { e.preventDefault(); handleFile(f); return; }
+      }
+    }
+  });
+
+  renderAll();
+  renderHints();
+})();
+</script>
+</body>
+</html>
