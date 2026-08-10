@@ -89,8 +89,45 @@ async function readWithClaude({ apiKey, model, mediaType, data }) {
   };
 }
 
+// Google retires model ids on its own schedule, so a hardcoded default goes
+// stale. On a 404 we ask the key what it can actually call and name those in
+// the error, which turns a dead end into a one-env-var fix.
+async function listGeminiModels(apiKey) {
+  try {
+    const r = await fetch(
+      "https://generativelanguage.googleapis.com/v1beta/models?key=" + encodeURIComponent(apiKey),
+    );
+    if (!r.ok) return [];
+    const json = await r.json();
+    return (json.models || [])
+      .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+      .map((m) => String(m.name || "").replace(/^models\//, ""))
+      .filter((n) => /flash|pro/.test(n) && !/embedding|aqa|tts|image|audio|native/i.test(n));
+  } catch {
+    return [];
+  }
+}
+
 async function readWithGemini({ apiKey, model, mediaType, data }) {
   const ai = new GoogleGenAI({ apiKey });
+  try {
+    return await callGemini({ ai, model, mediaType, data });
+  } catch (err) {
+    if (Number(err?.status) === 404) {
+      const available = await listGeminiModels(apiKey);
+      throw new ReaderError(
+        503,
+        'Gemini model "' + model + '" is not available on this key.' +
+          (available.length
+            ? " Set GEMINI_MODEL to one of: " + available.slice(0, 8).join(", ")
+            : " Check the model list in Google AI Studio."),
+      );
+    }
+    throw err;
+  }
+}
+
+async function callGemini({ ai, model, mediaType, data }) {
   const response = await ai.models.generateContent({
     model,
     contents: [
