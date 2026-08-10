@@ -904,34 +904,17 @@
 (function () {
   "use strict";
 
-  var KEY = "split.receipt.v1";
+  var KEY = "split.receipt.v2";
   var PALETTE = ["var(--p1)", "var(--p2)", "var(--p3)", "var(--p4)", "var(--p5)", "var(--p6)"];
 
   var uid = function () { return Math.random().toString(36).slice(2, 9); };
 
   var seed = function () {
-    var a = { id: uid(), name: "Rahul" },
-        b = { id: uid(), name: "Smyan" },
-        c = { id: uid(), name: "Arjun" };
-    var all = [a.id, b.id, c.id];
-    var item = function (name, price, shared) {
-      return { id: uid(), name: name, price: price, shared: shared.slice() };
-    };
     return {
-      people: [a, b, c],
-      items: [
-        item("Bounty", 31.34, all),
-        item("Cascade", 15.39, all),
-        item("TP", 23.09, all),
-        item("Toilet Cleaner", 8.24, all),
-        item("Tide", 27.49, [a.id, b.id]),
-        item("GY", 8.24, [a.id]),
-        item("Milk", 2.83, [a.id]),
-        item("Eggs", 9.12, [a.id]),
-        item("Vodka", 24.39, all)
-      ],
-      tax: { mode: "amt", value: 18.88 },
-      tip: { mode: "amt", value: 7.51 },
+      people: [],
+      items: [],
+      tax: { mode: "amt", value: 0 },
+      tip: { mode: "amt", value: 0 },
       open: {}
     };
   };
@@ -1013,9 +996,9 @@
     var rounded = {};
     cents.forEach(function (c) { rounded[c.id] = (c.floor + (c.extraCent || 0)) / 100; });
 
-    var orphans = state.items.filter(function (it) {
+    var orphans = ids.length ? state.items.filter(function (it) {
       return !it.shared.filter(function (id) { return ids.indexOf(id) !== -1; }).length;
-    });
+    }) : [];
 
     return {
       ids: ids, subtotals: subtotals, lines: lines, shares: shares,
@@ -1080,13 +1063,16 @@
   function renderItems() {
     itemList.textContent = "";
     if (!state.items.length) {
-      itemList.appendChild(el("div", "empty", "No items yet — add the first line off the receipt."));
+      itemList.appendChild(el("div", "empty", state.people.length
+        ? "No items yet — add the first line off the receipt, or scan it."
+        : "Add the people splitting this receipt first, then the items."));
       return;
     }
     state.items.forEach(function (it, idx) {
       var row = el("div", "item");
       var sharers = it.shared.filter(function (id) { return !!personById(id); });
-      if (!sharers.length) row.classList.add("orphan");
+      // Only an actual mistake once there's somebody it could have been assigned to.
+      if (!sharers.length && state.people.length) row.classList.add("orphan");
 
       var top = el("div", "item-top");
 
@@ -1181,8 +1167,8 @@
     if (!note) return;
     var n = it.shared.filter(function (id) { return !!personById(id); }).length;
     if (!n) {
-      note.textContent = "unassigned";
-      note.classList.add("warn");
+      note.textContent = state.people.length ? "unassigned" : "";
+      note.classList.toggle("warn", !!state.people.length);
     } else {
       note.classList.remove("warn");
       note.textContent = n > 1 ? money(num(it.price) / n) + " each" : "";
