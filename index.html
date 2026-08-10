@@ -950,6 +950,24 @@
     font-variant-numeric: tabular-nums;
   }
 
+  .pass-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 14px;
+  }
+  .pass-form input {
+    width: 100%;
+    padding: 9px 11px;
+    border: 1px solid var(--rule);
+    border-radius: var(--r);
+    background: var(--paper);
+    font-family: var(--font-mono);
+    font-size: 14px;
+  }
+  .pass-form input:focus { outline: none; border-color: var(--focus); }
+  .pass-error { color: var(--danger); font-size: 13px; margin: 0; }
+
   .reconcile {
     margin-top: 12px;
     padding: 9px 11px;
@@ -2078,6 +2096,127 @@
     };
   }
 
+  // -- AI reading: the model returns item rows directly, so there's no OCR
+  // -- text and no parser between the photo and the ledger.
+  var PASS_KEY = "split.scanpass.v1";
+  var scanPass = null;
+  try { scanPass = localStorage.getItem(PASS_KEY); } catch (e) {}
+
+  // Haiku tops out around 1568px on the long edge — anything beyond that is
+  // billed as tokens without adding detail the model can use.
+  function scanImage(bmp, rect) {
+    var r = rect || { x: 0, y: 0, w: bmp.width, h: bmp.height };
+    var scale = Math.min(1, 1568 / Math.max(r.w, r.h));
+    var cw = Math.max(1, Math.round(r.w * scale));
+    var ch = Math.max(1, Math.round(r.h * scale));
+    var c = document.createElement("canvas");
+    c.width = cw; c.height = ch;
+    var ctx = c.getContext("2d");
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bmp, r.x, r.y, r.w, r.h, 0, 0, cw, ch);
+    return c.toDataURL("image/jpeg", 0.8);
+  }
+
+  function askPassphrase(onDone, message) {
+    sheetBody.textContent = "";
+    document.getElementById("sheetTitle").textContent = "Passphrase";
+    sheetBody.appendChild(el("p", "scan-hint",
+      "Reading with AI runs on the site's own account, so it's behind a passphrase. You only need this once on this device — everything else in the app stays open."));
+
+    var form = el("div", "pass-form");
+    if (message) form.appendChild(el("p", "pass-error", message));
+
+    var input = document.createElement("input");
+    input.type = "password";
+    input.placeholder = "Passphrase";
+    input.autocomplete = "current-password";
+    input.setAttribute("aria-label", "Passphrase");
+    form.appendChild(input);
+    sheetBody.appendChild(form);
+    setTimeout(function () { input.focus(); }, 30);
+
+    var submit = function () {
+      var value = input.value.trim();
+      if (!value) return;
+      scanPass = value;
+      try { localStorage.setItem(PASS_KEY, value); } catch (e) {}
+      onDone();
+    };
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); submit(); }
+    });
+
+    var cancel = el("button", "btn", "Back");
+    cancel.type = "button";
+    cancel.addEventListener("click", showPick);
+
+    var go = el("button", "btn btn-solid", "Continue");
+    go.type = "button";
+    go.addEventListener("click", submit);
+
+    setFoot([cancel, go]);
+  }
+
+  async function readWithAI(bmp, rect) {
+    if (!scanPass) {
+      askPassphrase(function () { readWithAI(bmp, rect); });
+      return;
+    }
+
+    attachPhoto(bmp, rect);
+    var setProgress = showWork();
+    setProgress("Reading the receipt…", null);
+
+    var payload;
+    try {
+      payload = scanImage(bmp, rect);
+    } catch (e) {
+      showError("Couldn't prepare that image.", String(e && e.message || e));
+      return;
+    }
+
+    var res, body;
+    try {
+      res = await fetch("/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Split-Pass": scanPass },
+        body: JSON.stringify({ image: payload }),
+      });
+      body = await res.json().catch(function () { return {}; });
+    } catch (e) {
+      showError("Couldn't reach the reader.",
+        "Check your connection, or use “Scan offline”, which runs entirely on this device.");
+      return;
+    }
+
+    if (res.status === 401) {
+      scanPass = null;
+      try { localStorage.removeItem(PASS_KEY); } catch (e) {}
+      askPassphrase(function () { readWithAI(bmp, rect); }, "That passphrase wasn't right.");
+      return;
+    }
+    if (!res.ok) {
+      showError(body.error || "The reader failed.",
+        "You can still scan offline on this device, or add the items by hand.");
+      return;
+    }
+
+    var result = {
+      items: (body.items || []).map(function (i) {
+        return { name: i.name, price: num(i.price), use: true };
+      }),
+      found: {
+        tax: body.tax == null ? null : num(body.tax),
+        tip: body.tip == null ? null : num(body.tip),
+        subtotal: body.subtotal == null ? null : num(body.subtotal),
+        total: body.total == null ? null : num(body.total),
+      },
+      raw: JSON.stringify(body, null, 2),
+    };
+
+    showReview(result, null, bmp, rect);
+  }
+
   // -- crop: the single biggest accuracy win, since it removes the store
   // -- header and payment footer that produce most of the parser's noise.
   function showCrop(bmp) {
@@ -2183,27 +2322,36 @@
       };
     }
 
-    var whole = el("button", "btn btn-quiet", "Use the whole image instead");
-    whole.type = "button";
-    whole.style.marginTop = "10px";
-    whole.addEventListener("click", function () { runScan(bmp, null); });
-    sheetBody.appendChild(whole);
+    var extras = el("div");
+    extras.style.cssText = "display:flex; flex-wrap:wrap; gap:4px; margin-top:8px;";
 
-    // Keeping the photo without OCR is a first-class choice: for a hard
-    // receipt it's faster to read it on screen than to correct bad guesses.
-    var keep = el("button", "btn", "Keep as reference");
+    var whole = el("button", "btn btn-quiet", "Use the whole image");
+    whole.type = "button";
+    whole.addEventListener("click", function () { readWithAI(bmp, null); });
+    extras.appendChild(whole);
+
+    // Keeping the photo without reading it is a first-class choice: for a
+    // hard receipt it can be faster to read it on screen than to fix guesses.
+    var keep = el("button", "btn btn-quiet", "Keep as reference only");
     keep.type = "button";
     keep.addEventListener("click", function () {
       attachPhoto(bmp, rect());
       closeSheet();
       say("Photo pinned above your items");
     });
+    extras.appendChild(keep);
+    sheetBody.appendChild(extras);
 
-    var go = el("button", "btn btn-solid", "Scan selection");
-    go.type = "button";
-    go.addEventListener("click", function () { runScan(bmp, rect()); });
+    var offline = el("button", "btn", "Scan offline");
+    offline.type = "button";
+    offline.title = "Reads on this device with OCR. Free, private, less accurate.";
+    offline.addEventListener("click", function () { runScan(bmp, rect()); });
 
-    setFoot([keep, go]);
+    var ai = el("button", "btn btn-solid", "Read with AI");
+    ai.type = "button";
+    ai.addEventListener("click", function () { readWithAI(bmp, rect()); });
+
+    setFoot([offline, ai]);
   }
 
   function showError(title, detail) {
@@ -2227,11 +2375,16 @@
     sheetBody.textContent = "";
     document.getElementById("sheetTitle").textContent = "Review items";
 
-    var shot = document.createElement("img");
-    shot.className = "shot";
-    shot.alt = "The processed image the scanner read";
-    shot.src = previewCanvas.toDataURL("image/jpeg", 0.7);
-    sheetBody.appendChild(shot);
+    // The offline scanner shows its thresholded image (what OCR actually saw);
+    // the AI path has no such artifact, so it shows the colour crop.
+    var shotSrc = previewCanvas ? previewCanvas.toDataURL("image/jpeg", 0.7) : photo;
+    if (shotSrc) {
+      var shot = document.createElement("img");
+      shot.className = "shot";
+      shot.alt = previewCanvas ? "The processed image the scanner read" : "The receipt that was read";
+      shot.src = shotSrc;
+      sheetBody.appendChild(shot);
+    }
 
     if (!result.items.length) {
       sheetBody.appendChild(el("p", "scan-hint",
@@ -2317,7 +2470,7 @@
       var det = document.createElement("details");
       det.className = "raw";
       var sum = document.createElement("summary");
-      sum.textContent = "Show the raw text OCR read";
+      sum.textContent = previewCanvas ? "Show the raw text OCR read" : "Show what the reader returned";
       det.appendChild(sum);
       var pre = document.createElement("pre");
       pre.textContent = result.raw.trim() || "(nothing)";
