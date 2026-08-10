@@ -1,19 +1,13 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { authorize, makeDailyLimiter } from "./_shared.js";
 
 // Vision calls on a big receipt can take longer than the 10s default.
 export const config = { maxDuration: 60 };
 
 const MODEL = "claude-haiku-4-5";
 const MAX_IMAGE_BYTES = 4_000_000;
-const DAILY_LIMIT = Number(process.env.SCAN_DAILY_LIMIT || 200);
 
-// Best-effort ceiling. Serverless instances are ephemeral and can run in
-// parallel, so this bounds one warm instance rather than the deployment —
-// a backstop against a runaway client loop, not a billing guarantee. The
-// passphrase and the size cap are the real controls.
-let windowDay = "";
-let windowCount = 0;
+const consume = makeDailyLimiter(Number(process.env.SCAN_DAILY_LIMIT || 200));
 
 const SCHEMA = {
   type: "object",
@@ -51,39 +45,16 @@ Rules:
 - Report subtotal, tax, tip, and total only if they are printed and legible. Use null for any that are absent — never infer or compute them.
 - If a price is genuinely unreadable, omit that item rather than guessing. A missing line is recoverable; an invented number is not.`;
 
-function hash(value) {
-  return createHash("sha256").update(String(value)).digest();
-}
-
-function passphraseOk(given, expected) {
-  if (!given || !expected) return false;
-  return timingSafeEqual(hash(given), hash(expected));
-}
-
 export default async function handler(req, res) {
   if (req.method !== "POST") {
     res.setHeader("Allow", "POST");
     return res.status(405).json({ error: "Use POST." });
   }
 
-  const expected = process.env.SCAN_PASSWORD;
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!expected || !apiKey) {
-    return res.status(503).json({
-      error: "Scanning isn't configured on this deployment yet.",
-    });
-  }
+  const auth = authorize(req);
+  if (auth.error) return res.status(auth.status).json({ error: auth.error });
 
-  if (!passphraseOk(req.headers["x-split-pass"], expected)) {
-    return res.status(401).json({ error: "That passphrase isn't right." });
-  }
-
-  const day = new Date().toISOString().slice(0, 10);
-  if (day !== windowDay) {
-    windowDay = day;
-    windowCount = 0;
-  }
-  if (windowCount >= DAILY_LIMIT) {
+  if (!consume()) {
     return res.status(429).json({
       error: "Daily scan limit reached. Try again tomorrow, or enter the items by hand.",
     });
@@ -102,10 +73,8 @@ export default async function handler(req, res) {
     return res.status(413).json({ error: "That image is too large. Crop tighter and try again." });
   }
 
-  windowCount += 1;
-
   try {
-    const client = new Anthropic({ apiKey });
+    const client = new Anthropic({ apiKey: auth.apiKey });
     const message = await client.messages.create({
       model: MODEL,
       max_tokens: 8192,

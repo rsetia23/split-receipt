@@ -254,6 +254,40 @@
 
   /* ---------- items ---------- */
 
+  .askrow {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .askrow[hidden] { display: none; }
+  .askrow input {
+    flex: 1;
+    min-width: 0;
+    padding: 9px 12px;
+    border: 1px solid var(--rule);
+    border-radius: var(--r);
+    background: var(--paper);
+    font-size: 14px;
+  }
+  .askrow input::placeholder { color: var(--muted); }
+  .askrow input:focus { outline: none; border-color: var(--focus); background: var(--surface); }
+  .askrow button { flex: none; }
+  .askrow.busy input { opacity: .6; }
+
+  .change {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 9px 0;
+    border-top: 1px solid var(--rule-soft);
+  }
+  .change:first-of-type { border-top: 0; }
+  .change-name { font-weight: 500; }
+  .change-who { font-size: 13px; text-align: right; }
+  .change-who .none { color: var(--muted); font-style: italic; }
+  .change-who b { font-weight: 600; }
+
   .items { display: flex; flex-direction: column; gap: 8px; }
 
   .item {
@@ -1064,6 +1098,13 @@
             <button class="btn btn-solid" id="addItem">Add item</button>
           </div>
         </div>
+        <form class="askrow" id="askRow" hidden autocomplete="off">
+          <input id="askInput" type="text"
+                 placeholder="Who had what? e.g. Arjun and Smyan shared the seafood, we all had dessert"
+                 aria-label="Describe who shared what" />
+          <button class="btn btn-solid" id="askBtn" type="submit">Assign</button>
+        </form>
+
         <div class="items" id="itemList"></div>
       </section>
 
@@ -1670,11 +1711,178 @@
   zoom.addEventListener("pointerup", dropPointer);
   zoom.addEventListener("pointercancel", dropPointer);
 
+  // ---- describe-the-split ------------------------------------------------
+  var askRow = document.getElementById("askRow");
+  var askInput = document.getElementById("askInput");
+  var askBtn = document.getElementById("askBtn");
+
+  function renderAsk() {
+    askRow.hidden = !(state.people.length && state.items.length);
+  }
+
+  function setAskBusy(busy) {
+    askRow.classList.toggle("busy", busy);
+    askInput.disabled = busy;
+    askBtn.disabled = busy;
+    askBtn.textContent = busy ? "Reading…" : "Assign";
+  }
+
+  function showAssignPreview(instruction, data) {
+    openSheet();
+    document.getElementById("sheetTitle").textContent = "Who had what";
+    sheetBody.textContent = "";
+
+    // Only surface entries that actually change something — the model is told
+    // to omit untouched items, but an echo of the current state is still a
+    // no-op and shouldn't be presented as a change to approve.
+    var changes = (data.assignments || []).filter(function (a) {
+      var it = state.items[a.item];
+      if (!it) return false;
+      var next = a.people.map(function (i) { return state.people[i] && state.people[i].id; }).filter(Boolean);
+      var now = it.shared.filter(function (id) { return !!personById(id); });
+      if (next.length !== now.length) return true;
+      return next.some(function (id) { return now.indexOf(id) === -1; });
+    });
+
+    sheetBody.appendChild(el("p", "scan-hint", "“" + instruction + "”"));
+
+    if (!changes.length) {
+      sheetBody.appendChild(el("p", "scan-hint",
+        data.note || "That didn't change any assignments. Try naming the items more directly."));
+    } else {
+      var list = el("div");
+      list.style.marginTop = "14px";
+      changes.forEach(function (a) {
+        var row = el("div", "change");
+        row.appendChild(el("div", "change-name", state.items[a.item].name || "Item"));
+
+        var who = el("div", "change-who");
+        if (!a.people.length) {
+          who.appendChild(el("span", "none", "nobody"));
+        } else {
+          a.people.forEach(function (idx, n) {
+            var p = state.people[idx];
+            if (!p) return;
+            if (n) who.appendChild(document.createTextNode(", "));
+            var b = el("b", null, p.name || "Unnamed");
+            b.style.color = colorOf(p.id);
+            who.appendChild(b);
+          });
+        }
+        row.appendChild(who);
+        list.appendChild(row);
+      });
+      sheetBody.appendChild(list);
+    }
+
+    var unmatched = (data.unmatched || [])
+      .map(function (i) { return state.items[i]; })
+      .filter(Boolean);
+    if (unmatched.length) {
+      var flag = el("div", "flag");
+      flag.textContent = "Left alone: " +
+        unmatched.map(function (i) { return i.name || "Item"; }).join(", ") +
+        " — say who had these and run it again.";
+      sheetBody.appendChild(flag);
+    }
+
+    if (data.note && changes.length) {
+      sheetBody.appendChild(el("p", "scan-hint", data.note));
+    }
+
+    var cancel = el("button", "btn", changes.length ? "Cancel" : "Back");
+    cancel.type = "button";
+    cancel.addEventListener("click", closeSheet);
+
+    var foot = [cancel];
+    if (changes.length) {
+      var apply = el("button", "btn btn-solid",
+        "Apply " + changes.length + (changes.length === 1 ? " change" : " changes"));
+      apply.type = "button";
+      apply.addEventListener("click", function () {
+        changes.forEach(function (a) {
+          var it = state.items[a.item];
+          if (!it) return;
+          it.shared = a.people
+            .map(function (i) { return state.people[i] && state.people[i].id; })
+            .filter(Boolean);
+        });
+        renderAll();
+        save();
+        closeSheet();
+        askInput.value = "";
+        say("Assigned " + changes.length + (changes.length === 1 ? " item" : " items"));
+      });
+      foot.push(apply);
+    }
+    setFoot(foot);
+  }
+
+  async function askAssign() {
+    var instruction = askInput.value.trim();
+    if (!instruction) return;
+
+    if (!scanPass) {
+      askPassphrase(function () { closeSheet(); askAssign(); }, null, closeSheet);
+      return;
+    }
+
+    setAskBusy(true);
+    var res, body;
+    try {
+      res = await fetch("/api/assign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Split-Pass": scanPass },
+        body: JSON.stringify({
+          instruction: instruction,
+          people: state.people.map(function (p) { return p.name || "Unnamed"; }),
+          items: state.items.map(function (it) {
+            return {
+              name: it.name || "Item",
+              price: num(it.price),
+              shared: it.shared
+                .map(function (id) {
+                  var i = state.people.findIndex(function (p) { return p.id === id; });
+                  return i < 0 ? null : i;
+                })
+                .filter(function (i) { return i !== null; }),
+            };
+          }),
+        }),
+      });
+      body = await res.json().catch(function () { return {}; });
+    } catch (e) {
+      setAskBusy(false);
+      say("Couldn't reach the assistant");
+      return;
+    }
+    setAskBusy(false);
+
+    if (res.status === 401) {
+      scanPass = null;
+      try { localStorage.removeItem(PASS_KEY); } catch (e) {}
+      askPassphrase(function () { closeSheet(); askAssign(); }, "That passphrase wasn't right.", closeSheet);
+      return;
+    }
+    if (!res.ok) {
+      say(body.error || "That didn't work");
+      return;
+    }
+
+    showAssignPreview(instruction, body);
+  }
+
+  askRow.addEventListener("submit", function (e) {
+    e.preventDefault();
+    askAssign();
+  });
+
   function renderAll() {
     renderPeople();
     renderItems();
     renderCharges();
     renderPhoto();
+    renderAsk();
     renderReceipt();
   }
 
@@ -2290,7 +2498,8 @@
     return c.toDataURL("image/jpeg", 0.8);
   }
 
-  function askPassphrase(onDone, message) {
+  function askPassphrase(onDone, message, onCancel) {
+    openSheet();
     sheetBody.textContent = "";
     document.getElementById("sheetTitle").textContent = "Passphrase";
     sheetBody.appendChild(el("p", "scan-hint",
@@ -2321,7 +2530,7 @@
 
     var cancel = el("button", "btn", "Back");
     cancel.type = "button";
-    cancel.addEventListener("click", showPick);
+    cancel.addEventListener("click", onCancel || showPick);
 
     var go = el("button", "btn btn-solid", "Continue");
     go.type = "button";
