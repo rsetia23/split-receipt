@@ -503,6 +503,76 @@
     color: var(--muted);
   }
   .lines .sub { color: var(--ink-soft); border-top: 1px solid var(--rule-soft); padding-top: 4px; margin-top: 3px; }
+  .lines .grand {
+    color: var(--ink);
+    font-weight: 600;
+    font-size: 12.5px;
+    border-top: 1px solid var(--rule);
+    padding-top: 4px;
+    margin-top: 3px;
+  }
+
+  /* ---------- share view ---------- */
+
+  .share-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--rule);
+    margin-bottom: 4px;
+  }
+  .share-head .amt {
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 21px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+  .share-head .eyebrow { display: block; margin-bottom: 2px; }
+
+  .share-block {
+    border-top: 1px dashed var(--rule);
+    padding: 12px 0 12px 11px;
+    position: relative;
+  }
+  .share-block::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 14px; bottom: 14px;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--c);
+  }
+  .share-name {
+    font-weight: 600;
+    color: var(--c);
+    margin-bottom: 5px;
+  }
+  .share-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+    color: var(--muted);
+  }
+  .share-lines div {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+  }
+  .share-lines div.sub { color: var(--ink-soft); border-top: 1px solid var(--rule-soft); padding-top: 4px; margin-top: 2px; }
+  .share-lines div.grand {
+    color: var(--ink);
+    font-weight: 600;
+    font-size: 12.5px;
+    border-top: 1px solid var(--rule);
+    padding-top: 4px;
+    margin-top: 2px;
+  }
 
   .receipt-foot {
     margin-top: 14px;
@@ -817,7 +887,7 @@
       <p id="stamp">who owes what, to the cent</p>
     </div>
     <div class="masthead-actions">
-      <button class="btn" id="copyBtn">Copy summary</button>
+      <button class="btn" id="shareBtn">Share</button>
       <button class="btn btn-danger" id="clearBtn">Clear all</button>
     </div>
   </header>
@@ -964,7 +1034,7 @@
       sharers.forEach(function (id) {
         subtotals[id] += each;
         lines[id].push({
-          label: (it.name || "Item") + (sharers.length > 1 ? " ÷" + sharers.length : ""),
+          label: (it.name || "Item") + ": " + num(it.price).toFixed(2) + "/" + sharers.length,
           amount: each
         });
       });
@@ -1263,10 +1333,19 @@
         sub.appendChild(el("span", null, "subtotal"));
         sub.appendChild(el("span", null, money(r.subtotals[id])));
         ul.appendChild(sub);
+
         var ex = document.createElement("li");
-        ex.appendChild(el("span", null, "tax + tip × " + Math.round(r.shares[id] * 100) + "%"));
+        ex.appendChild(el("span", null, "tax+tip: (" + r.subtotals[id].toFixed(2) +
+          "/" + r.assigned.toFixed(2) + ") * " + r.extra.toFixed(2)));
         ex.appendChild(el("span", null, money(r.totals[id] - r.subtotals[id])));
         ul.appendChild(ex);
+
+        var tot = document.createElement("li");
+        tot.className = "grand";
+        tot.appendChild(el("span", null, "total"));
+        tot.appendChild(el("span", null, money(r.totals[id])));
+        ul.appendChild(tot);
+
         box.appendChild(ul);
       }
 
@@ -1356,20 +1435,26 @@
     toastTimer = setTimeout(function () { toast.classList.remove("show"); }, 1900);
   }
 
-  document.getElementById("copyBtn").addEventListener("click", function () {
+  // The plain-text form mirrors the original script's output line for line.
+  function summaryText() {
     var r = compute();
-    var out = ["Receipt split — " + money(r.grand) + " total",
-               "Subtotal " + money(r.assigned) + "  ·  Tax " + money(r.tax) + "  ·  Tip " + money(r.tip), ""];
+    var out = [];
     r.ids.forEach(function (id) {
-      out.push(nameOf(id) + ": " + money(r.totals[id]));
-      r.lines[id].forEach(function (l) { out.push("  " + l.label + " " + money(l.amount)); });
-      out.push("  subtotal " + money(r.subtotals[id]) +
-               " + tax/tip " + money(r.totals[id] - r.subtotals[id]));
+      out.push(nameOf(id) + ":");
+      r.lines[id].forEach(function (l) {
+        out.push("- " + l.label + " = " + l.amount.toFixed(2));
+      });
+      out.push("- subtotal: " + r.subtotals[id].toFixed(2));
+      out.push("- tax+tip: (" + r.subtotals[id].toFixed(2) + "/" +
+               r.assigned.toFixed(2) + ") * " + r.extra.toFixed(2));
+      out.push("- total: " + r.totals[id].toFixed(2));
       out.push("");
     });
-    var text = out.join("\n").trim();
+    return out.join("\n").trim();
+  }
 
-    var done = function () { say("Summary copied"); };
+  function copyText(text, okMsg) {
+    var done = function () { say(okMsg); };
     var fallback = function () {
       var ta = document.createElement("textarea");
       ta.value = text;
@@ -1378,13 +1463,80 @@
       document.body.appendChild(ta);
       ta.select();
       try { document.execCommand("copy"); done(); }
-      catch (e) { say("Couldn't copy — select the receipt and copy manually"); }
+      catch (e) { say("Couldn't copy — select the text and copy manually"); }
       document.body.removeChild(ta);
     };
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done, fallback);
     } else { fallback(); }
-  });
+  }
+
+  function showShare() {
+    var r = compute();
+    openSheet();
+    document.getElementById("sheetTitle").textContent = "The split";
+    sheetBody.textContent = "";
+
+    if (!r.ids.length || !state.items.length) {
+      sheetBody.appendChild(el("p", "scan-hint",
+        "Add people and items first — there's nothing to share yet."));
+      var close = el("button", "btn btn-solid", "Back");
+      close.type = "button";
+      close.addEventListener("click", closeSheet);
+      setFoot([close]);
+      return;
+    }
+
+    var head = el("div", "share-head");
+    var left = el("div");
+    left.appendChild(el("span", "eyebrow", "Total"));
+    left.appendChild(el("div", null, money(r.assigned) + " + " + money(r.extra) + " tax & tip"));
+    head.appendChild(left);
+    head.appendChild(el("div", "amt", money(r.grand)));
+    sheetBody.appendChild(head);
+
+    r.ids.forEach(function (id) {
+      var block = el("div", "share-block");
+      block.style.setProperty("--c", colorOf(id));
+      block.appendChild(el("div", "share-name", nameOf(id)));
+
+      var body = el("div", "share-lines");
+      var row = function (label, value, cls) {
+        var d = el("div", cls || null);
+        d.appendChild(el("span", null, label));
+        d.appendChild(el("span", null, value));
+        body.appendChild(d);
+      };
+      r.lines[id].forEach(function (l) { row(l.label, l.amount.toFixed(2)); });
+      row("subtotal", r.subtotals[id].toFixed(2), "sub");
+      row("tax+tip: (" + r.subtotals[id].toFixed(2) + "/" + r.assigned.toFixed(2) +
+          ") * " + r.extra.toFixed(2), (r.totals[id] - r.subtotals[id]).toFixed(2));
+      row("total", r.totals[id].toFixed(2), "grand");
+
+      block.appendChild(body);
+      sheetBody.appendChild(block);
+    });
+
+    var copy = el("button", "btn", "Copy text");
+    copy.type = "button";
+    copy.addEventListener("click", function () { copyText(summaryText(), "Copied"); });
+
+    var foot = [copy];
+    if (navigator.share) {
+      var share = el("button", "btn btn-solid", "Share");
+      share.type = "button";
+      share.addEventListener("click", function () {
+        navigator.share({ title: "Receipt split", text: summaryText() })
+          .catch(function () { /* user dismissed the share sheet */ });
+      });
+      foot.push(share);
+    } else {
+      copy.className = "btn btn-solid";
+    }
+    setFoot(foot);
+  }
+
+  document.getElementById("shareBtn").addEventListener("click", showShare);
 
   document.getElementById("stamp").textContent =
     new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }).toLowerCase() +
@@ -1863,6 +2015,7 @@
 
   document.getElementById("scanBtn").addEventListener("click", function () {
     openSheet();
+    document.getElementById("sheetTitle").textContent = "Scan receipt";
     showPick();
   });
 
