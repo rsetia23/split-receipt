@@ -743,6 +743,55 @@
   .drop.over { border-color: var(--accent); background: var(--surface-2); }
   .drop-icon { font-size: 30px; line-height: 1; }
 
+  .stage {
+    position: relative;
+    line-height: 0;
+    border: 1px solid var(--rule);
+    border-radius: var(--r);
+    overflow: hidden;
+    background: var(--surface-2);
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+    cursor: crosshair;
+  }
+  .stage canvas { width: 100%; height: auto; display: block; }
+
+  .sel {
+    position: absolute;
+    border: 1.5px solid #fff;
+    box-shadow: 0 0 0 9999px rgba(6, 10, 9, .58);
+    cursor: move;
+    box-sizing: border-box;
+  }
+  .sel::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border: 1px dashed rgba(0, 0, 0, .45);
+    pointer-events: none;
+  }
+
+  .handle {
+    position: absolute;
+    width: 26px;
+    height: 26px;
+    display: grid;
+    place-items: center;
+  }
+  .handle::before {
+    content: "";
+    width: 12px;
+    height: 12px;
+    background: #fff;
+    border: 1.5px solid rgba(6, 10, 9, .5);
+    border-radius: 3px;
+  }
+  .handle.nw { top: -13px; left: -13px; cursor: nwse-resize; }
+  .handle.ne { top: -13px; right: -13px; cursor: nesw-resize; }
+  .handle.sw { bottom: -13px; left: -13px; cursor: nesw-resize; }
+  .handle.se { bottom: -13px; right: -13px; cursor: nwse-resize; }
+
   .shot {
     width: 100%;
     max-height: 190px;
@@ -1624,21 +1673,21 @@
     return thresh;
   }
 
-  async function preprocess(file) {
-    var bmp = await loadBitmap(file);
-    var w = bmp.width, h = bmp.height;
+  // rect is in source-image pixels; omit it to use the whole image.
+  function preprocess(bmp, rect) {
+    var r = rect || { x: 0, y: 0, w: bmp.width, h: bmp.height };
     // Receipts are tall and thin; aim for a width OCR is comfortable with.
+    // Cropping in makes the remaining text bigger, so this often upscales.
     var scale = 1;
-    if (w > 1800) scale = 1800 / w;
-    else if (w < 1000) scale = Math.min(2.5, 1000 / w);
+    if (r.w > 1800) scale = 1800 / r.w;
+    else if (r.w < 1000) scale = Math.min(3, 1000 / r.w);
 
-    var cw = Math.round(w * scale), ch = Math.round(h * scale);
+    var cw = Math.round(r.w * scale), ch = Math.round(r.h * scale);
     var c = document.createElement("canvas");
     c.width = cw; c.height = ch;
     var ctx = c.getContext("2d", { willReadFrequently: true });
     ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(bmp, 0, 0, cw, ch);
-    if (bmp.close) bmp.close();
+    ctx.drawImage(bmp, r.x, r.y, r.w, r.h, 0, 0, cw, ch);
 
     var img = ctx.getImageData(0, 0, cw, ch);
     var d = img.data;
@@ -1779,6 +1828,120 @@
     };
   }
 
+  // -- crop: the single biggest accuracy win, since it removes the store
+  // -- header and payment footer that produce most of the parser's noise.
+  function showCrop(bmp) {
+    sheetBody.textContent = "";
+    document.getElementById("sheetTitle").textContent = "Crop to the items";
+
+    sheetBody.appendChild(el("p", "scan-hint",
+      "Drag a box around just the item list. Leaving out the store header and the payment lines makes the reading noticeably more accurate."));
+
+    var stage = el("div", "stage");
+    stage.style.marginTop = "12px";
+
+    // Draw the (orientation-corrected) bitmap once at a sane preview size.
+    var pw = Math.min(bmp.width, 1200);
+    var ph = Math.round(bmp.height * (pw / bmp.width));
+    var pc = document.createElement("canvas");
+    pc.width = pw; pc.height = ph;
+    pc.getContext("2d").drawImage(bmp, 0, 0, pw, ph);
+    stage.appendChild(pc);
+
+    var sel = el("div", "sel");
+    ["nw", "ne", "sw", "se"].forEach(function (k) {
+      sel.appendChild(el("div", "handle " + k));
+    });
+    stage.appendChild(sel);
+    sheetBody.appendChild(stage);
+
+    // Selection is tracked as fractions of the stage so it survives resize.
+    var box = { x: 0.06, y: 0.10, w: 0.88, h: 0.72 };
+
+    function paint() {
+      sel.style.left = (box.x * 100) + "%";
+      sel.style.top = (box.y * 100) + "%";
+      sel.style.width = (box.w * 100) + "%";
+      sel.style.height = (box.h * 100) + "%";
+    }
+    paint();
+
+    var drag = null;
+    var MIN = 0.04;
+    var clamp = function (v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; };
+
+    function pos(e) {
+      var b = stage.getBoundingClientRect();
+      return { x: clamp((e.clientX - b.left) / b.width, 0, 1), y: clamp((e.clientY - b.top) / b.height, 0, 1) };
+    }
+
+    stage.addEventListener("pointerdown", function (e) {
+      var handle = e.target.classList && e.target.classList.contains("handle") ? e.target : null;
+      var p = pos(e);
+      stage.setPointerCapture(e.pointerId);
+      e.preventDefault();
+
+      if (handle) {
+        var corner = handle.className.split(" ").pop();
+        drag = { mode: "resize", corner: corner };
+      } else if (e.target === sel || sel.contains(e.target)) {
+        drag = { mode: "move", dx: p.x - box.x, dy: p.y - box.y };
+      } else {
+        drag = { mode: "draw", ox: p.x, oy: p.y };
+        box = { x: p.x, y: p.y, w: 0, h: 0 };
+        paint();
+      }
+    });
+
+    stage.addEventListener("pointermove", function (e) {
+      if (!drag) return;
+      var p = pos(e);
+      if (drag.mode === "move") {
+        box.x = clamp(p.x - drag.dx, 0, 1 - box.w);
+        box.y = clamp(p.y - drag.dy, 0, 1 - box.h);
+      } else if (drag.mode === "draw") {
+        box.x = Math.min(drag.ox, p.x);
+        box.y = Math.min(drag.oy, p.y);
+        box.w = Math.abs(p.x - drag.ox);
+        box.h = Math.abs(p.y - drag.oy);
+      } else {
+        var right = box.x + box.w, bottom = box.y + box.h;
+        if (drag.corner === "nw" || drag.corner === "sw") { box.x = Math.min(p.x, right - MIN); box.w = right - box.x; }
+        else { box.w = Math.max(MIN, clamp(p.x, 0, 1) - box.x); }
+        if (drag.corner === "nw" || drag.corner === "ne") { box.y = Math.min(p.y, bottom - MIN); box.h = bottom - box.y; }
+        else { box.h = Math.max(MIN, clamp(p.y, 0, 1) - box.y); }
+      }
+      paint();
+    });
+
+    var endDrag = function () {
+      if (drag && drag.mode === "draw" && (box.w < MIN || box.h < MIN)) {
+        box = { x: 0.06, y: 0.10, w: 0.88, h: 0.72 };
+        paint();
+      }
+      drag = null;
+    };
+    stage.addEventListener("pointerup", endDrag);
+    stage.addEventListener("pointercancel", endDrag);
+
+    var whole = el("button", "btn", "Use whole image");
+    whole.type = "button";
+    whole.addEventListener("click", function () { runScan(bmp, null); });
+
+    var go = el("button", "btn btn-solid", "Scan selection");
+    go.type = "button";
+    go.addEventListener("click", function () {
+      runScan(bmp, {
+        x: Math.round(box.x * bmp.width),
+        y: Math.round(box.y * bmp.height),
+        w: Math.max(1, Math.round(box.w * bmp.width)),
+        h: Math.max(1, Math.round(box.h * bmp.height))
+      });
+    });
+
+    setFoot([whole, go]);
+  }
+
   function showError(title, detail) {
     sheetBody.textContent = "";
     sheetBody.appendChild(el("p", "scan-hint", title));
@@ -1796,8 +1959,9 @@
     setFoot([again, manual]);
   }
 
-  function showReview(result, previewCanvas) {
+  function showReview(result, previewCanvas, bmp, rect) {
     sheetBody.textContent = "";
+    document.getElementById("sheetTitle").textContent = "Review items";
 
     var shot = document.createElement("img");
     shot.className = "shot";
@@ -1809,9 +1973,9 @@
       sheetBody.appendChild(el("p", "scan-hint",
         "No item lines came through clearly. That usually means the photo is angled, dim, or too small — a straight-on shot cropped to the item list works best."));
       addRawBlock();
-      var retry = el("button", "btn", "Try another photo");
+      var retry = el("button", "btn", bmp ? "Adjust crop" : "Try another photo");
       retry.type = "button";
-      retry.addEventListener("click", showPick);
+      retry.addEventListener("click", function () { bmp ? showCrop(bmp) : showPick(); });
       var byHand = el("button", "btn btn-solid", "Add items by hand");
       byHand.type = "button";
       byHand.addEventListener("click", function () { closeSheet(); addItem(); });
@@ -1897,9 +2061,9 @@
       sheetBody.appendChild(det);
     }
 
-    var back = el("button", "btn", "Different photo");
+    var back = el("button", "btn", bmp ? "Adjust crop" : "Different photo");
     back.type = "button";
-    back.addEventListener("click", showPick);
+    back.addEventListener("click", function () { bmp ? showCrop(bmp) : showPick(); });
 
     var add = el("button", "btn btn-solid", "");
     add.type = "button";
@@ -1961,12 +2125,23 @@
       return;
     }
     var setProgress = showWork();
+    try {
+      setProgress("Opening the photo…", null);
+      var bmp = await loadBitmap(file);
+      showCrop(bmp);
+    } catch (e) {
+      showError("Couldn't read that image.", String(e && e.message || e));
+    }
+  }
+
+  async function runScan(bmp, rect) {
+    var setProgress = showWork();
     var canvas;
     try {
       setProgress("Preparing the image…", null);
-      canvas = await preprocess(file);
+      canvas = preprocess(bmp, rect);
     } catch (e) {
-      showError("Couldn't read that image.", String(e && e.message || e));
+      showError("Couldn't prepare that image.", String(e && e.message || e));
       return;
     }
 
@@ -2000,7 +2175,7 @@
 
       var res = await worker.recognize(canvas);
       var parsed = parseReceipt(res.data.text || "");
-      showReview(parsed, canvas);
+      showReview(parsed, canvas, bmp, rect);
     } catch (e) {
       if (worker) { try { await worker.terminate(); } catch (x) {} worker = null; }
       showError("The scan failed partway through.", String(e && e.message || e));
