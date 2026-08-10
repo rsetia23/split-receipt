@@ -743,6 +743,80 @@
   .drop.over { border-color: var(--accent); background: var(--surface-2); }
   .drop-icon { font-size: 30px; line-height: 1; }
 
+  /* ---------- pinned receipt photo ---------- */
+
+  .photo {
+    display: block;
+    width: 100%;
+    max-height: 460px;
+    object-fit: contain;
+    object-position: top center;
+    border-radius: var(--r);
+    border: 1px solid var(--rule-soft);
+    background: var(--surface-2);
+    cursor: zoom-in;
+  }
+
+  .photo-note {
+    margin: 8px 0 0;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--muted);
+    text-align: center;
+  }
+
+  .zoom {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    background: rgba(6, 10, 9, .93);
+    overflow: hidden;
+    touch-action: none;
+    display: grid;
+    place-items: center;
+  }
+  .zoom[hidden] { display: none; }
+  .zoom img {
+    max-width: 100%;
+    max-height: 100%;
+    transform-origin: 0 0;
+    will-change: transform;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  .zoom img:active { cursor: grabbing; }
+
+  .zoom-close {
+    position: absolute;
+    top: calc(12px + env(safe-area-inset-top));
+    right: 14px;
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, .3);
+    background: rgba(6, 10, 9, .6);
+    color: #fff;
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .zoom-hint {
+    position: absolute;
+    left: 50%;
+    bottom: calc(18px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    padding: 7px 14px;
+    border-radius: 999px;
+    background: rgba(6, 10, 9, .7);
+    border: 1px solid rgba(255, 255, 255, .16);
+    color: rgba(255, 255, 255, .82);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    white-space: nowrap;
+    transition: opacity .4s ease;
+  }
+
   .stage {
     position: relative;
     line-height: 0;
@@ -952,6 +1026,17 @@
         <div class="people-list" id="peopleList"></div>
       </section>
 
+      <section class="panel" id="photoPanel" hidden>
+        <div class="panel-head">
+          <span class="eyebrow">Receipt photo</span>
+          <div style="display:flex; gap:8px;">
+            <button class="btn" id="photoToggle">Hide</button>
+            <button class="btn btn-danger" id="photoRemove">Remove</button>
+          </div>
+        </div>
+        <div id="photoWrap"></div>
+      </section>
+
       <section class="panel">
         <div class="panel-head">
           <span class="eyebrow">Items</span>
@@ -1008,6 +1093,12 @@
 
 <input type="file" id="fileInput" accept="image/*" hidden />
 
+<div class="zoom" id="zoom" hidden>
+  <img id="zoomImg" alt="Your receipt photo" draggable="false" />
+  <button class="zoom-close" id="zoomClose" aria-label="Close">×</button>
+  <div class="zoom-hint" id="zoomHint">Pinch or scroll to zoom · drag to pan · double-tap to reset</div>
+</div>
+
 <div class="scrim" id="scrim" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
     <div class="sheet-head">
@@ -1047,6 +1138,21 @@
 
   function save() {
     try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+  }
+
+  // The photo lives under its own key: it's far bigger than everything else,
+  // so a quota failure here must never cost you the receipt itself.
+  var PHOTO_KEY = "split.photo.v2";
+  var photo = null;
+  try { photo = localStorage.getItem(PHOTO_KEY); } catch (e) {}
+
+  function savePhoto() {
+    try {
+      if (photo) localStorage.setItem(PHOTO_KEY, photo);
+      else localStorage.removeItem(PHOTO_KEY);
+    } catch (e) {
+      say("Photo is too big to store — it'll stay until you reload the page.");
+    }
   }
 
   var money = function (n) {
@@ -1407,10 +1513,149 @@
     barTotal.textContent = money(r.grand);
   }
 
+  // ---- pinned photo ------------------------------------------------------
+  var photoPanel = document.getElementById("photoPanel");
+  var photoWrap = document.getElementById("photoWrap");
+
+  function renderPhoto() {
+    if (!photo) { photoPanel.hidden = true; return; }
+    photoPanel.hidden = false;
+    var open = state.photoOpen !== false;
+    document.getElementById("photoToggle").textContent = open ? "Hide" : "Show";
+    photoWrap.textContent = "";
+    if (!open) return;
+
+    var img = document.createElement("img");
+    img.className = "photo";
+    img.src = photo;
+    img.alt = "Your receipt photo — tap to zoom";
+    img.addEventListener("click", openZoom);
+    photoWrap.appendChild(img);
+    photoWrap.appendChild(el("p", "photo-note", "tap to zoom in"));
+  }
+
+  document.getElementById("photoToggle").addEventListener("click", function () {
+    state.photoOpen = state.photoOpen === false;
+    renderPhoto();
+    save();
+  });
+
+  document.getElementById("photoRemove").addEventListener("click", function () {
+    photo = null;
+    savePhoto();
+    renderPhoto();
+  });
+
+  // Keep the readable colour version, not the black-and-white one OCR reads.
+  function makePhoto(bmp, rect) {
+    var r = rect || { x: 0, y: 0, w: bmp.width, h: bmp.height };
+    var scale = Math.min(1, 1200 / r.w);
+    var cw = Math.round(r.w * scale), ch = Math.round(r.h * scale);
+    var c = document.createElement("canvas");
+    c.width = cw; c.height = ch;
+    var ctx = c.getContext("2d");
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bmp, r.x, r.y, r.w, r.h, 0, 0, cw, ch);
+    return c.toDataURL("image/jpeg", 0.72);
+  }
+
+  function attachPhoto(bmp, rect) {
+    try {
+      photo = makePhoto(bmp, rect);
+      state.photoOpen = true;
+      savePhoto();
+      renderPhoto();
+      save();
+    } catch (e) { /* a photo is a bonus, never a blocker */ }
+  }
+
+  // ---- zoom --------------------------------------------------------------
+  var zoom = document.getElementById("zoom");
+  var zoomImg = document.getElementById("zoomImg");
+  var zoomHint = document.getElementById("zoomHint");
+  var zs = 1, zx = 0, zy = 0, pointers = {}, pinch = null, panFrom = null, hintTimer;
+
+  function applyZoom() {
+    zoomImg.style.transform = "translate(" + zx + "px," + zy + "px) scale(" + zs + ")";
+  }
+  function resetZoom() { zs = 1; zx = 0; zy = 0; applyZoom(); }
+
+  function openZoom() {
+    zoomImg.src = photo;
+    zoom.hidden = false;
+    document.body.style.overflow = "hidden";
+    resetZoom();
+    zoomHint.style.opacity = "1";
+    clearTimeout(hintTimer);
+    hintTimer = setTimeout(function () { zoomHint.style.opacity = "0"; }, 2600);
+  }
+  function closeZoom() {
+    zoom.hidden = true;
+    if (scrim.hidden) document.body.style.overflow = "";
+    pointers = {}; pinch = null; panFrom = null;
+  }
+
+  document.getElementById("zoomClose").addEventListener("click", closeZoom);
+  zoom.addEventListener("click", function (e) { if (e.target === zoom) closeZoom(); });
+  zoom.addEventListener("dblclick", function (e) { e.preventDefault(); resetZoom(); });
+
+  // Zoom toward the cursor so the point under it stays put.
+  zoom.addEventListener("wheel", function (e) {
+    e.preventDefault();
+    var next = Math.min(6, Math.max(1, zs * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+    var b = zoomImg.getBoundingClientRect();
+    var px = e.clientX - b.left, py = e.clientY - b.top;
+    zx -= px * (next / zs - 1);
+    zy -= py * (next / zs - 1);
+    zs = next;
+    if (zs === 1) { zx = 0; zy = 0; }
+    applyZoom();
+  }, { passive: false });
+
+  zoom.addEventListener("pointerdown", function (e) {
+    if (e.target === zoom) return;
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var ids = Object.keys(pointers);
+    if (ids.length === 2) {
+      var a = pointers[ids[0]], b2 = pointers[ids[1]];
+      pinch = { d: Math.hypot(a.x - b2.x, a.y - b2.y), s: zs };
+      panFrom = null;
+    } else {
+      panFrom = { x: e.clientX - zx, y: e.clientY - zy };
+    }
+    zoom.setPointerCapture(e.pointerId);
+  });
+
+  zoom.addEventListener("pointermove", function (e) {
+    if (!pointers[e.pointerId]) return;
+    pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+    var ids = Object.keys(pointers);
+    if (pinch && ids.length === 2) {
+      var a = pointers[ids[0]], b2 = pointers[ids[1]];
+      var d = Math.hypot(a.x - b2.x, a.y - b2.y);
+      zs = Math.min(6, Math.max(1, pinch.s * (d / pinch.d)));
+      if (zs === 1) { zx = 0; zy = 0; }
+      applyZoom();
+    } else if (panFrom) {
+      zx = e.clientX - panFrom.x;
+      zy = e.clientY - panFrom.y;
+      applyZoom();
+    }
+  });
+
+  var dropPointer = function (e) {
+    delete pointers[e.pointerId];
+    if (Object.keys(pointers).length < 2) pinch = null;
+    if (!Object.keys(pointers).length) panFrom = null;
+  };
+  zoom.addEventListener("pointerup", dropPointer);
+  zoom.addEventListener("pointercancel", dropPointer);
+
   function renderAll() {
     renderPeople();
     renderItems();
     renderCharges();
+    renderPhoto();
     renderReceipt();
   }
 
@@ -1441,8 +1686,11 @@
 
   document.getElementById("clearBtn").addEventListener("click", function () {
     if (!confirm("Clear every person, item, and charge?")) return;
-    state = { people: [], items: [], tax: { mode: "amt", value: 0 }, tip: { mode: "amt", value: 0 }, open: {} };
+    state = seed();
+    photo = null;
+    savePhoto();
     renderAll();
+    renderHints();
     save();
   });
 
@@ -1639,7 +1887,9 @@
   document.getElementById("sheetClose").addEventListener("click", closeSheet);
   scrim.addEventListener("click", function (e) { if (e.target === scrim) closeSheet(); });
   document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && !scrim.hidden) closeSheet();
+    if (e.key !== "Escape") return;
+    if (!zoom.hidden) closeZoom();
+    else if (!scrim.hidden) closeSheet();
   });
 
   // -- image prep: OCR does much better on a big, high-contrast, flat image --
@@ -1924,22 +2174,36 @@
     stage.addEventListener("pointerup", endDrag);
     stage.addEventListener("pointercancel", endDrag);
 
-    var whole = el("button", "btn", "Use whole image");
-    whole.type = "button";
-    whole.addEventListener("click", function () { runScan(bmp, null); });
-
-    var go = el("button", "btn btn-solid", "Scan selection");
-    go.type = "button";
-    go.addEventListener("click", function () {
-      runScan(bmp, {
+    function rect() {
+      return {
         x: Math.round(box.x * bmp.width),
         y: Math.round(box.y * bmp.height),
         w: Math.max(1, Math.round(box.w * bmp.width)),
         h: Math.max(1, Math.round(box.h * bmp.height))
-      });
+      };
+    }
+
+    var whole = el("button", "btn btn-quiet", "Use the whole image instead");
+    whole.type = "button";
+    whole.style.marginTop = "10px";
+    whole.addEventListener("click", function () { runScan(bmp, null); });
+    sheetBody.appendChild(whole);
+
+    // Keeping the photo without OCR is a first-class choice: for a hard
+    // receipt it's faster to read it on screen than to correct bad guesses.
+    var keep = el("button", "btn", "Keep as reference");
+    keep.type = "button";
+    keep.addEventListener("click", function () {
+      attachPhoto(bmp, rect());
+      closeSheet();
+      say("Photo pinned above your items");
     });
 
-    setFoot([whole, go]);
+    var go = el("button", "btn btn-solid", "Scan selection");
+    go.type = "button";
+    go.addEventListener("click", function () { runScan(bmp, rect()); });
+
+    setFoot([keep, go]);
   }
 
   function showError(title, detail) {
@@ -2135,6 +2399,7 @@
   }
 
   async function runScan(bmp, rect) {
+    attachPhoto(bmp, rect);
     var setProgress = showWork();
     var canvas;
     try {
