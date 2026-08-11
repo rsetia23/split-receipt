@@ -3015,11 +3015,22 @@
       });
       if (f.tax != null && applyTax.on) state.tax = { mode: "amt", value: f.tax };
       if (f.tip != null && applyTip.on) state.tip = { mode: "amt", value: f.tip };
+
+      // The pinned photo earns its space when you're reading it to type items.
+      // After an AI read there's nothing left to transcribe, so collapse it and
+      // give the room back — one tap on Show brings it straight back.
+      var tucked = false;
+      if (result.readBy && photo && state.photoOpen !== false) {
+        state.photoOpen = false;
+        tucked = true;
+      }
+
       renderAll();
       renderHints();
       save();
       closeSheet();
-      say("Added " + picked.length + (picked.length === 1 ? " item" : " items") + " — assigned to everyone");
+      say("Added " + picked.length + (picked.length === 1 ? " item" : " items") +
+        (tucked ? " — photo tucked away" : " — assigned to everyone"));
     });
 
     function countUp() {
