@@ -4,5 +4,14 @@
   "type": "module",
   "dependencies": {
     "@google/genai": "^2.16.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "jsdom": "^30.0.1"
+  },
+  "scripts": {
+    "bundle": "esbuild js/main.js --bundle --format=iife --outfile=app.js",
+    "test": "npm run bundle && node --test test/*.test.js",
+    "deploy": "npm run bundle && npx --yes vercel@latest deploy --prod"
   }
 }
