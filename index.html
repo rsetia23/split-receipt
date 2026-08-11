@@ -675,6 +675,7 @@
     border-top: 1px solid var(--rule);
     z-index: 10;
   }
+  .totalbar-sum { display: flex; flex-direction: column; gap: 1px; }
   .totalbar .amt {
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
@@ -1117,7 +1118,6 @@
       <p id="stamp">who owes what, to the cent</p>
     </div>
     <div class="masthead-actions">
-      <button class="btn" id="shareBtn">Share</button>
       <button class="btn btn-danger" id="clearBtn">Clear all</button>
     </div>
   </header>
@@ -1200,8 +1200,11 @@
 </div>
 
 <div class="totalbar">
-  <span class="eyebrow">Grand total</span>
-  <span class="amt" id="barTotal">$0.00</span>
+  <div class="totalbar-sum">
+    <span class="eyebrow">Grand total</span>
+    <span class="amt" id="barTotal">$0.00</span>
+  </div>
+  <button class="btn btn-solid" id="barShareBtn" type="button">Share</button>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -1623,7 +1626,18 @@
     });
     receipt.appendChild(splits);
 
-    receipt.appendChild(el("div", "receipt-foot", "— THANK YOU —"));
+    var shareRow = el("div", "receipt-foot");
+    if (r.ids.length && state.items.length) {
+      var shareBtn = el("button", "btn btn-solid", "Share the split");
+      shareBtn.type = "button";
+      shareBtn.style.width = "100%";
+      shareBtn.style.justifyContent = "center";
+      shareBtn.addEventListener("click", showShare);
+      shareRow.appendChild(shareBtn);
+    } else {
+      shareRow.textContent = "— THANK YOU —";
+    }
+    receipt.appendChild(shareRow);
 
     barTotal.textContent = money(r.grand);
     renderTipPresets(r);
@@ -2011,14 +2025,21 @@
     if (inputs.length) { var last = inputs[inputs.length - 1]; last.focus(); last.select(); }
   });
 
-  document.getElementById("clearBtn").addEventListener("click", function () {
-    if (!confirm("Clear every person, item, and charge?")) return;
+  // Shared by the header button and the "start fresh" action at the end of a
+  // share, so both leave exactly the same blank slate.
+  function startFresh(ask) {
+    if (ask && !confirm("Clear every person, item, and charge?")) return false;
     state = seed();
     photo = null;
     savePhoto();
     renderAll();
     renderHints();
     save();
+    return true;
+  }
+
+  document.getElementById("clearBtn").addEventListener("click", function () {
+    startFresh(true);
   });
 
   document.querySelectorAll("[data-charge]").forEach(function (input) {
@@ -2334,6 +2355,22 @@
       sheetBody.appendChild(block);
     });
 
+    // Sharing is the end of the job, so this is where "what now?" gets asked.
+    // Without it the only way back to a blank slate is Clear all at the top,
+    // which reads as destructive rather than as finishing.
+    var done = el("div");
+    done.style.cssText = "margin-top:18px; padding-top:14px; border-top:1px solid var(--rule); text-align:center;";
+    var fresh = el("button", "btn btn-quiet", "Done — start a new receipt");
+    fresh.type = "button";
+    fresh.addEventListener("click", function () {
+      if (startFresh(true)) {
+        closeSheet();
+        say("Cleared — ready for the next one");
+      }
+    });
+    done.appendChild(fresh);
+    sheetBody.appendChild(done);
+
     var canShareFiles = !!(navigator.canShare && navigator.share);
 
     var copy = el("button", "btn", "Copy text");
@@ -2360,7 +2397,7 @@
     setFoot(foot);
   }
 
-  document.getElementById("shareBtn").addEventListener("click", showShare);
+  document.getElementById("barShareBtn").addEventListener("click", showShare);
 
   document.getElementById("stamp").textContent =
     new Date().toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }).toLowerCase() +
