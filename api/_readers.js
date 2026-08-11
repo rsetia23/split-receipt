@@ -89,41 +89,77 @@ async function readWithClaude({ apiKey, model, mediaType, data }) {
   };
 }
 
-// Google retires model ids on its own schedule, so a hardcoded default goes
-// stale. On a 404 we ask the key what it can actually call and name those in
-// the error, which turns a dead end into a one-env-var fix.
+// Google retires model ids on its own schedule, so any hardcoded default goes
+// stale — and asking the user to chase the new name just moves the chore. On a
+// 404 we ask the key what it can actually call, pick a vision-capable Flash
+// model, and retry once. The choice is cached per warm instance.
+let resolvedGeminiModel = null;
+
 async function listGeminiModels(apiKey) {
-  try {
-    const r = await fetch(
-      "https://generativelanguage.googleapis.com/v1beta/models?key=" + encodeURIComponent(apiKey),
-    );
-    if (!r.ok) return [];
-    const json = await r.json();
-    return (json.models || [])
-      .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
-      .map((m) => String(m.name || "").replace(/^models\//, ""))
-      .filter((n) => /flash|pro/.test(n) && !/embedding|aqa|tts|image|audio|native/i.test(n));
-  } catch {
-    return [];
-  }
+  const r = await fetch(
+    "https://generativelanguage.googleapis.com/v1beta/models?key=" + encodeURIComponent(apiKey),
+  );
+  if (!r.ok) return [];
+  const json = await r.json();
+  return (json.models || [])
+    .filter((m) => (m.supportedGenerationMethods || []).includes("generateContent"))
+    .map((m) => String(m.name || "").replace(/^models\//, ""));
+}
+
+function pickGeminiModel(names) {
+  const version = (n) => {
+    const m = n.match(/(\d+(?:\.\d+)?)/);
+    return m ? parseFloat(m[1]) : 0;
+  };
+  // Flash is the cost/latency point this app wants; exclude the variants that
+  // aren't general vision models, and prefer plain ids over dated previews.
+  const usable = names.filter(
+    (n) =>
+      /flash/i.test(n) &&
+      !/embedding|aqa|tts|image|audio|native|live|thinking|lite/i.test(n),
+  );
+  const ranked = (usable.length ? usable : names.filter((n) => /pro/i.test(n) && !/vision/i.test(n)))
+    .slice()
+    .sort((a, b) => {
+      const stable = (n) => (/preview|exp|\d{4}/i.test(n) ? 1 : 0);
+      return (
+        stable(a) - stable(b) ||
+        version(b) - version(a) ||
+        a.length - b.length
+      );
+    });
+  return ranked[0] || null;
 }
 
 async function readWithGemini({ apiKey, model, mediaType, data }) {
   const ai = new GoogleGenAI({ apiKey });
+  const first = resolvedGeminiModel || model;
   try {
-    return await callGemini({ ai, model, mediaType, data });
+    return { ...(await callGemini({ ai, model: first, mediaType, data })), model: first };
   } catch (err) {
-    if (Number(err?.status) === 404) {
-      const available = await listGeminiModels(apiKey);
+    if (Number(err?.status) !== 404) throw err;
+
+    let available = [];
+    try {
+      available = await listGeminiModels(apiKey);
+    } catch {
+      /* fall through to the error below */
+    }
+    const fallback = pickGeminiModel(available);
+    if (!fallback || fallback === first) {
       throw new ReaderError(
         503,
-        'Gemini model "' + model + '" is not available on this key.' +
+        'Gemini model "' + first + '" is not available on this key.' +
           (available.length
-            ? " Set GEMINI_MODEL to one of: " + available.slice(0, 8).join(", ")
+            ? " Available: " + available.slice(0, 8).join(", ")
             : " Check the model list in Google AI Studio."),
       );
     }
-    throw err;
+
+    const result = { ...(await callGemini({ ai, model: fallback, mediaType, data })), model: fallback };
+    resolvedGeminiModel = fallback; // only cache a model that actually worked
+    console.log("[gemini] %s unavailable; using %s", first, fallback);
+    return result;
   }
 }
 
@@ -178,7 +214,9 @@ export async function readReceipt({ engine, keys, mediaType, data }) {
     throw new ReaderError(503, spec.label + " isn't configured on this deployment.");
   }
 
-  const { text, usage } = await IMPL[engine]({ apiKey, model: spec.model, mediaType, data });
+  const called = await IMPL[engine]({ apiKey, model: spec.model, mediaType, data });
+  const { text, usage } = called;
+  const modelUsed = called.model || spec.model;
 
   let parsed;
   try {
@@ -191,7 +229,7 @@ export async function readReceipt({ engine, keys, mediaType, data }) {
   const numberOrNull = (v) => (Number.isFinite(v) ? v : null);
   return {
     engine,
-    model: spec.model,
+    model: modelUsed,
     items: items
       .filter((i) => i && typeof i.name === "string" && Number.isFinite(i.price))
       .map((i) => ({ name: i.name.slice(0, 60), price: i.price })),
