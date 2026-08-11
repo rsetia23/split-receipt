@@ -426,6 +426,39 @@
   .seg button + button { border-left: 1px solid var(--rule); }
   .seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
 
+  .presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .presets:empty { display: none; }
+  .presets button {
+    padding: 5px 10px;
+    border: 1px solid var(--rule);
+    border-radius: var(--r);
+    background: transparent;
+    color: var(--ink-soft);
+    cursor: pointer;
+    font-size: 12.5px;
+    line-height: 1.3;
+    text-align: center;
+    transition: border-color .12s ease, color .12s ease, background-color .12s ease;
+  }
+  .presets button:hover { border-color: var(--muted); color: var(--ink); }
+  .presets button[aria-pressed="true"] {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--paper);
+  }
+  .presets button span {
+    display: block;
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    font-size: 11px;
+    opacity: .72;
+  }
+
   .charge-hint {
     margin: 6px 0 0;
     font-family: var(--font-mono);
@@ -1155,6 +1188,7 @@
               </div>
             </div>
             <p class="charge-hint" id="tipHint"></p>
+            <div class="presets" id="tipPresets"></div>
           </div>
         </div>
       </section>
@@ -1592,6 +1626,7 @@
     receipt.appendChild(el("div", "receipt-foot", "— THANK YOU —"));
 
     barTotal.textContent = money(r.grand);
+    renderTipPresets(r);
   }
 
   // ---- pinned photo ------------------------------------------------------
@@ -1893,20 +1928,14 @@
     var instruction = askInput.value.trim();
     if (!instruction) return;
 
-    if (!scanPass) {
-      askPassphrase(function () { closeSheet(); askAssign(); }, null, closeSheet);
-      return;
-    }
-
     setAskBusy(true);
     var res, body;
     try {
       res = await fetch("/api/assign", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Split-Pass": scanPass },
+        headers: passHeaders(),
         body: JSON.stringify({
           instruction: instruction,
-          engine: engine,
           people: state.people.map(function (p) { return p.name || "Unnamed"; }),
           items: state.items.map(function (it) {
             return {
@@ -2011,6 +2040,34 @@
     });
   });
 
+  // Tip shortcuts. Set as a percentage rather than a fixed amount so the tip
+  // still tracks the bill if items change afterwards, and computed off the
+  // pre-tax subtotal — the convention, and the base the app already uses.
+  var TIP_PRESETS = [15, 18, 20, 22];
+  var tipPresets = document.getElementById("tipPresets");
+
+  function renderTipPresets(r) {
+    tipPresets.textContent = "";
+    if (!r || !(r.assigned > 0)) return;
+
+    TIP_PRESETS.forEach(function (pct) {
+      var amount = r.assigned * pct / 100;
+      var b = el("button", null, pct + "%");
+      b.type = "button";
+      b.appendChild(el("span", null, money(amount)));
+      b.setAttribute("aria-pressed",
+        state.tip.mode === "pct" && Math.abs(num(state.tip.value) - pct) < 0.001 ? "true" : "false");
+      b.addEventListener("click", function () {
+        state.tip = { mode: "pct", value: pct };
+        renderCharges();
+        renderReceipt();
+        renderHints();
+        save();
+      });
+      tipPresets.appendChild(b);
+    });
+  }
+
   function renderHints() {
     var r = compute();
     document.getElementById("taxHint").textContent =
@@ -2069,9 +2126,9 @@
   // broken. Drawn on a canvas rather than screenshotting the DOM so there's
   // no library and no dependence on how the page happens to be laid out.
   var IMG = {
-    bg: "#FBFCFA", ink: "#16211F", soft: "#3D4A46", muted: "#6B766F",
-    rule: "#D6DBD2", faint: "#E4E8DF", accent: "#1F6F5C",
-    people: ["#B44A2E", "#2C6BA0", "#6F4FA3", "#8A6A00", "#A03A63", "#0C6E78"],
+    bg: "#141A18", ink: "#EDF2ED", soft: "#B9C2BC", muted: "#8B968F",
+    rule: "#39443F", faint: "#252D2A", accent: "#5FCCAC",
+    people: ["#E07457", "#5A9BD0", "#9C80D2", "#C1992A", "#CE6791", "#2BA3B0"],
   };
   var SANS = 'ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif';
   var MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
@@ -2549,113 +2606,22 @@
   // -- AI reading: the model returns item rows directly, so there's no OCR
   // -- text and no parser between the photo and the ledger.
   var PASS_KEY = "split.scanpass.v1";
-  var ENGINE_KEY = "split.engine.v1";
-  var ENGINES = [
-    { id: "claude", label: "Claude" },
-    { id: "gemini", label: "Gemini" },
-  ];
   var scanPass = null;
-  var engine = "claude";
-  try {
-    scanPass = localStorage.getItem(PASS_KEY);
-    var savedEngine = localStorage.getItem(ENGINE_KEY);
-    if (ENGINES.some(function (e) { return e.id === savedEngine; })) engine = savedEngine;
-  } catch (e) {}
+  try { scanPass = localStorage.getItem(PASS_KEY); } catch (e) {}
 
-  function engineLabel() {
-    var found = ENGINES.find(function (e) { return e.id === engine; });
-    return found ? found.label : engine;
-  }
-
-  // Shown on the crop step so the same crop can be sent to either reader —
-  // the only comparison that actually tells you which is better for your
-  // receipts.
-  function engineChooser() {
-    var wrap = el("div", "engine");
-    wrap.appendChild(el("span", null, "Reader"));
-    var seg = el("div", "seg");
-    ENGINES.forEach(function (e) {
-      var b = el("button", null, e.label);
-      b.type = "button";
-      b.setAttribute("aria-pressed", e.id === engine ? "true" : "false");
-      b.addEventListener("click", function () {
-        engine = e.id;
-        try { localStorage.setItem(ENGINE_KEY, engine); } catch (err) {}
-        Array.prototype.forEach.call(seg.children, function (child) {
-          child.setAttribute("aria-pressed", child === b ? "true" : "false");
-        });
-      });
-      seg.appendChild(b);
-    });
-    wrap.appendChild(seg);
-    return wrap;
-  }
-
-  // Haiku tops out around 1568px on the long edge — anything beyond that is
-  // billed as tokens without adding detail the model can use.
-  function scanImage(bmp, rect) {
-    var r = rect || { x: 0, y: 0, w: bmp.width, h: bmp.height };
-    var scale = Math.min(1, 1568 / Math.max(r.w, r.h));
-    var cw = Math.max(1, Math.round(r.w * scale));
-    var ch = Math.max(1, Math.round(r.h * scale));
-    var c = document.createElement("canvas");
-    c.width = cw; c.height = ch;
-    var ctx = c.getContext("2d");
-    ctx.imageSmoothingQuality = "high";
-    ctx.drawImage(bmp, r.x, r.y, r.w, r.h, 0, 0, cw, ch);
-    return c.toDataURL("image/jpeg", 0.8);
-  }
-
-  function askPassphrase(onDone, message, onCancel) {
-    openSheet();
-    sheetBody.textContent = "";
-    document.getElementById("sheetTitle").textContent = "Passphrase";
-    sheetBody.appendChild(el("p", "scan-hint",
-      "Reading with AI runs on the site's own account, so it's behind a passphrase. You only need this once on this device — everything else in the app stays open."));
-
-    var form = el("div", "pass-form");
-    if (message) form.appendChild(el("p", "pass-error", message));
-
-    var input = document.createElement("input");
-    input.type = "password";
-    input.placeholder = "Passphrase";
-    input.autocomplete = "current-password";
-    input.setAttribute("aria-label", "Passphrase");
-    form.appendChild(input);
-    sheetBody.appendChild(form);
-    setTimeout(function () { input.focus(); }, 30);
-
-    var submit = function () {
-      var value = input.value.trim();
-      if (!value) return;
-      scanPass = value;
-      try { localStorage.setItem(PASS_KEY, value); } catch (e) {}
-      onDone();
-    };
-    input.addEventListener("keydown", function (e) {
-      if (e.key === "Enter") { e.preventDefault(); submit(); }
-    });
-
-    var cancel = el("button", "btn", "Back");
-    cancel.type = "button";
-    cancel.addEventListener("click", onCancel || showPick);
-
-    var go = el("button", "btn btn-solid", "Continue");
-    go.type = "button";
-    go.addEventListener("click", submit);
-
-    setFoot([cancel, go]);
+  // The deployment decides whether a passphrase is required. We send one only
+  // if we have it, and prompt only when the server actually answers 401 — so an
+  // open deployment never asks, and a gated one still works.
+  function passHeaders() {
+    var h = { "Content-Type": "application/json" };
+    if (scanPass) h["X-Split-Pass"] = scanPass;
+    return h;
   }
 
   async function readWithAI(bmp, rect) {
-    if (!scanPass) {
-      askPassphrase(function () { readWithAI(bmp, rect); });
-      return;
-    }
-
     attachPhoto(bmp, rect);
     var setProgress = showWork();
-    setProgress("Reading with " + engineLabel() + "…", null);
+    setProgress("Reading the receipt…", null);
 
     var payload;
     try {
@@ -2669,8 +2635,8 @@
     try {
       res = await fetch("/api/scan", {
         method: "POST",
-        headers: { "Content-Type": "application/json", "X-Split-Pass": scanPass },
-        body: JSON.stringify({ image: payload, engine: engine }),
+        headers: passHeaders(),
+        body: JSON.stringify({ image: payload }),
       });
       body = await res.json().catch(function () { return {}; });
     } catch (e) {
@@ -2702,7 +2668,7 @@
         subtotal: body.subtotal == null ? null : num(body.subtotal),
         total: body.total == null ? null : num(body.total),
       },
-      readBy: body.model || engineLabel(),
+      readBy: body.model || "the reader",
       raw: JSON.stringify(body, null, 2),
     };
 
@@ -2833,7 +2799,6 @@
     });
     extras.appendChild(keep);
     sheetBody.appendChild(extras);
-    sheetBody.appendChild(engineChooser());
 
     var offline = el("button", "btn", "Scan offline");
     offline.type = "button";

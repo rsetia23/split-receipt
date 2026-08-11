@@ -24,7 +24,7 @@ export default async function handler(req, res) {
   }
 
   const body = req.body || {};
-  const engine = typeof body.engine === "string" && ENGINES[body.engine] ? body.engine : "claude";
+  const engine = typeof body.engine === "string" && ENGINES[body.engine] ? body.engine : "gemini";
   const people = (Array.isArray(body.people) ? body.people : []).map((n) => String(n).slice(0, 40));
   const items = Array.isArray(body.items) ? body.items : [];
   const instruction = typeof body.instruction === "string" ? body.instruction.trim() : "";

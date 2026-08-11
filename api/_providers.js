@@ -1,4 +1,3 @@
-import Anthropic from "@anthropic-ai/sdk";
 import { GoogleGenAI } from "@google/genai";
 
 // One schema-constrained JSON call, two providers. Everything feature-specific
@@ -6,7 +5,6 @@ import { GoogleGenAI } from "@google/genai";
 // comparison between engines is a comparison of models, not of prompts.
 
 export const ENGINES = {
-  claude: { label: "Claude Haiku", key: "anthropic", model: process.env.CLAUDE_MODEL || "claude-haiku-4-5" },
   gemini: { label: "Gemini Flash", key: "gemini", model: process.env.GEMINI_MODEL || "gemini-2.5-flash" },
 };
 
@@ -15,45 +13,6 @@ export class ProviderError extends Error {
     super(message);
     this.status = status;
   }
-}
-
-// --- Anthropic ---------------------------------------------------------------
-
-function claudeContent(parts) {
-  return parts.map((p) =>
-    p.type === "image"
-      ? { type: "image", source: { type: "base64", media_type: p.mediaType, data: p.data } }
-      : { type: "text", text: p.text },
-  );
-}
-
-async function callClaude({ apiKey, model, system, schema, parts, maxTokens }) {
-  const client = new Anthropic({ apiKey });
-  const message = await client.messages.create({
-    model,
-    max_tokens: maxTokens,
-    system,
-    output_config: { format: { type: "json_schema", schema } },
-    messages: [{ role: "user", content: claudeContent(parts) }],
-  });
-
-  if (message.stop_reason === "refusal") {
-    throw new ProviderError(422, "The model declined that request.");
-  }
-  if (message.stop_reason === "max_tokens") {
-    throw new ProviderError(422, "That was too long to handle in one pass. Try a smaller crop or fewer items.");
-  }
-
-  const text = message.content.find((b) => b.type === "text")?.text;
-  if (!text) throw new ProviderError(502, "The model returned nothing readable.");
-  return {
-    text,
-    model,
-    usage: {
-      input_tokens: message.usage?.input_tokens ?? null,
-      output_tokens: message.usage?.output_tokens ?? null,
-    },
-  };
 }
 
 // --- Google ------------------------------------------------------------------
@@ -165,7 +124,7 @@ async function callGemini({ apiKey, model, system, schema, parts }) {
 
 // --- dispatch ----------------------------------------------------------------
 
-const IMPL = { claude: callClaude, gemini: callGemini };
+const IMPL = { gemini: callGemini };
 
 export async function generateJSON({ engine, keys, system, schema, parts, maxTokens = 4096 }) {
   const spec = ENGINES[engine];

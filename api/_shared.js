@@ -12,17 +12,19 @@ function hash(value) {
  * comparison is constant-time regardless of passphrase length.
  */
 export function authorize(req) {
-  const expected = process.env.SCAN_PASSWORD;
-  const keys = {
-    anthropic: process.env.ANTHROPIC_API_KEY || null,
-    gemini: process.env.GEMINI_API_KEY || null,
-  };
-  if (!expected || !(keys.anthropic || keys.gemini)) {
+  const keys = { gemini: process.env.GEMINI_API_KEY || null };
+  if (!keys.gemini) {
     return { status: 503, error: "Scanning isn't configured on this deployment yet." };
   }
-  const given = req.headers["x-split-pass"];
-  if (!given || !timingSafeEqual(hash(given), hash(expected))) {
-    return { status: 401, error: "That passphrase isn't right." };
+  // The passphrase is optional: enforced only while SCAN_PASSWORD is set. On a
+  // free key the gate protects a daily quota rather than a bill, so it stays
+  // off by default — set the variable again the day a paid key is attached.
+  const expected = process.env.SCAN_PASSWORD;
+  if (expected) {
+    const given = req.headers["x-split-pass"];
+    if (!given || !timingSafeEqual(hash(given), hash(expected))) {
+      return { status: 401, error: "That passphrase isn't right." };
+    }
   }
   return { keys };
 }

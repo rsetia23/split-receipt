@@ -24,7 +24,7 @@ export default async function handler(req, res) {
   }
 
   const body = req.body || {};
-  const engine = typeof body.engine === "string" && ENGINES[body.engine] ? body.engine : "claude";
+  const engine = typeof body.engine === "string" && ENGINES[body.engine] ? body.engine : "gemini";
 
   const image = typeof body.image === "string" ? body.image : "";
   const match = image.match(/^data:(image\/(?:jpeg|png|webp));base64,(.+)$/);
