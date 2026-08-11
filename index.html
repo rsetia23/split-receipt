@@ -1957,9 +1957,11 @@
     setAskBusy(false);
 
     if (res.status === 401) {
+      var hadPass = !!scanPass;
       scanPass = null;
       try { localStorage.removeItem(PASS_KEY); } catch (e) {}
-      askPassphrase(function () { closeSheet(); askAssign(); }, "That passphrase wasn't right.", closeSheet);
+      askPassphrase(function () { closeSheet(); askAssign(); },
+        hadPass ? "That passphrase wasn't right." : null, closeSheet);
       return;
     }
     if (!res.ok) {
@@ -2618,6 +2620,62 @@
     return h;
   }
 
+  // Beyond ~1568px on the long edge a receipt photo costs image tokens without
+  // adding detail the model can use, so cap it there before uploading.
+  function scanImage(bmp, rect) {
+    var r = rect || { x: 0, y: 0, w: bmp.width, h: bmp.height };
+    var scale = Math.min(1, 1568 / Math.max(r.w, r.h));
+    var cw = Math.max(1, Math.round(r.w * scale));
+    var ch = Math.max(1, Math.round(r.h * scale));
+    var c = document.createElement("canvas");
+    c.width = cw; c.height = ch;
+    var ctx = c.getContext("2d");
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bmp, r.x, r.y, r.w, r.h, 0, 0, cw, ch);
+    return c.toDataURL("image/jpeg", 0.8);
+  }
+
+  function askPassphrase(onDone, message, onCancel) {
+    openSheet();
+    sheetBody.textContent = "";
+    document.getElementById("sheetTitle").textContent = "Passphrase";
+    sheetBody.appendChild(el("p", "scan-hint",
+      "Reading with AI runs on this site's own account, so it's behind a passphrase. You only need this once on this device — everything else in the app stays open."));
+
+    var form = el("div", "pass-form");
+    if (message) form.appendChild(el("p", "pass-error", message));
+
+    var input = document.createElement("input");
+    input.type = "password";
+    input.placeholder = "Passphrase";
+    input.autocomplete = "current-password";
+    input.setAttribute("aria-label", "Passphrase");
+    form.appendChild(input);
+    sheetBody.appendChild(form);
+    setTimeout(function () { input.focus(); }, 30);
+
+    var submit = function () {
+      var value = input.value.trim();
+      if (!value) return;
+      scanPass = value;
+      try { localStorage.setItem(PASS_KEY, value); } catch (e) {}
+      onDone();
+    };
+    input.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); submit(); }
+    });
+
+    var cancel = el("button", "btn", "Back");
+    cancel.type = "button";
+    cancel.addEventListener("click", onCancel || showPick);
+
+    var go = el("button", "btn btn-solid", "Continue");
+    go.type = "button";
+    go.addEventListener("click", submit);
+
+    setFoot([cancel, go]);
+  }
+
   async function readWithAI(bmp, rect) {
     attachPhoto(bmp, rect);
     var setProgress = showWork();
@@ -2646,9 +2704,11 @@
     }
 
     if (res.status === 401) {
+      var hadPass = !!scanPass;
       scanPass = null;
       try { localStorage.removeItem(PASS_KEY); } catch (e) {}
-      askPassphrase(function () { readWithAI(bmp, rect); }, "That passphrase wasn't right.");
+      askPassphrase(function () { readWithAI(bmp, rect); },
+        hadPass ? "That passphrase wasn't right." : null);
       return;
     }
     if (!res.ok) {
