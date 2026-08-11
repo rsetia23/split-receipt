@@ -1,5 +1,6 @@
 import { authorize, makeDailyLimiter } from "./_shared.js";
-import { readReceipt, ENGINES, ReaderError } from "./_readers.js";
+import { readReceipt } from "./_readers.js";
+import { ENGINES, ProviderError } from "./_providers.js";
 
 // Vision calls on a big receipt can take longer than the 10s default.
 export const config = { maxDuration: 60 };
@@ -43,7 +44,7 @@ export default async function handler(req, res) {
     });
     return res.status(200).json(result);
   } catch (err) {
-    if (err instanceof ReaderError) {
+    if (err instanceof ProviderError) {
       return res.status(err.status).json({ error: err.message });
     }
     // A failure with no cause attached is close to useless. Provider messages

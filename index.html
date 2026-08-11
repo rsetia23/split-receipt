@@ -1906,6 +1906,7 @@
         headers: { "Content-Type": "application/json", "X-Split-Pass": scanPass },
         body: JSON.stringify({
           instruction: instruction,
+          engine: engine,
           people: state.people.map(function (p) { return p.name || "Unnamed"; }),
           items: state.items.map(function (it) {
             return {
