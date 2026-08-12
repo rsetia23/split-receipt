@@ -108,3 +108,8 @@ test("line labels show the division that produced each share", () => {
   assert.equal(r.lines.a[0].label, "Bounty: 31.34/3");
   assert.equal(Number(r.lines.a[0].amount.toFixed(2)), 10.45);
 });
+
+test("an item one person had is not divided by one", () => {
+  const r = compute(stateOf([item("1", "Espresso", 4.5, ["a"])], [person("a", "A")]));
+  assert.equal(r.lines.a[0].label, "Espresso: 4.50");
+});

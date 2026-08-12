@@ -25,7 +25,10 @@ export function compute(state) {
     sharers.forEach((id) => {
       subtotals[id] += each;
       lines[id].push({
-        label: (it.name || "Item") + ": " + num(it.price).toFixed(2) + "/" + sharers.length,
+        // The divisor only earns its place when it actually divided something:
+        // "12.00/1" reads as a question rather than an explanation.
+        label: (it.name || "Item") + ": " + num(it.price).toFixed(2) +
+          (sharers.length > 1 ? "/" + sharers.length : ""),
         amount: each,
       });
     });

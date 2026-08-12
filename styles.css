@@ -97,7 +97,9 @@
   .wrap {
     max-width: 1080px;
     margin: 0 auto;
-    padding: 28px 20px 140px;
+    /* The 120px of bottom room is only needed to clear the fixed
+       totalbar, which exists on mobile only. */
+    padding: 28px 20px 48px;
   }
 
   /* ---------- masthead ---------- */
@@ -147,6 +149,9 @@
     transition: background-color .12s ease, border-color .12s ease, color .12s ease;
   }
   .btn:hover { background: var(--surface-2); color: var(--ink); border-color: var(--muted); }
+  /* The display above outranks the UA sheet's rule for [hidden], so a hidden
+     button would otherwise still show. */
+  .btn[hidden] { display: none; }
   .btn-solid {
     background: var(--ink);
     border-color: var(--ink);
@@ -345,6 +350,17 @@
   }
   .chip-all:hover { color: var(--ink); border-color: var(--muted); }
 
+  /* The same dashed pill, standing alone above the list. It needs its own
+     on-state: the per-item chips fill with the person's colour, and this one
+     belongs to no person, so it borrows the ink fill the $/% toggles use. */
+  .chip-bulk { margin: 0 0 10px; }
+  .chip-bulk[aria-pressed="true"] {
+    background: var(--ink);
+    border-color: var(--ink);
+    color: var(--paper);
+  }
+  .chip-bulk[aria-pressed="true"]:hover { color: var(--paper); border-color: var(--ink); }
+
   .split-note {
     font-family: var(--font-mono);
     font-size: 11px;
@@ -364,9 +380,11 @@
 
   /* ---------- charges ---------- */
 
+  /* 240px rather than 190px so tax and tip stack one column earlier: the tip
+     presets below need the full width to keep four amounts on one row. */
   .charge-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
     gap: 14px;
   }
 
@@ -413,9 +431,11 @@
   .seg button + button { border-left: 1px solid var(--rule); }
   .seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
 
+  /* One row of equal columns: sized to their own content the four presets came
+     out ragged, and they wrapped 3-and-1 on a phone. */
   .presets {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 6px;
     margin-top: 8px;
   }
@@ -458,18 +478,33 @@
   .receipt {
     position: sticky;
     top: 20px;
+    /* Cap to the viewport so a tall panel can't push its own footer
+       off-screen — on a sticky element the overflow is unreachable. */
+    max-height: calc(100vh - 40px);
+    max-height: calc(100dvh - 40px);
+    display: flex;
+    flex-direction: column;
     background: var(--surface);
     border: 1px solid var(--rule);
     border-bottom: 0;
     border-radius: var(--r) var(--r) 0 0;
     padding: 18px 18px 22px;
+    /* Torn bottom edge. Two layers on purpose: the notch wedge opens upward
+       from each tooth's tip, so a tile taller than half its width swallows the
+       whole panel — the tile is capped at --tw/2 and a plain rectangle keeps
+       everything above the teeth opaque. */
     --tw: 12px;
-    -webkit-mask: conic-gradient(from -45deg at bottom, #0000 90deg, #000 0) bottom / var(--tw) 100% repeat-x;
-    mask: conic-gradient(from -45deg at bottom, #0000 90deg, #000 0) bottom / var(--tw) 100% repeat-x;
+    -webkit-mask:
+      conic-gradient(from -45deg at bottom, #0000 90deg, #000 0) bottom / var(--tw) calc(var(--tw) / 2) repeat-x,
+      linear-gradient(#000 0 0) top / 100% calc(100% - var(--tw) / 2) no-repeat;
+    mask:
+      conic-gradient(from -45deg at bottom, #0000 90deg, #000 0) bottom / var(--tw) calc(var(--tw) / 2) repeat-x,
+      linear-gradient(#000 0 0) top / 100% calc(100% - var(--tw) / 2) no-repeat;
   }
 
   .receipt-head {
     display: flex;
+    flex: none;
     align-items: baseline;
     justify-content: space-between;
     gap: 10px;
@@ -482,7 +517,7 @@
     text-transform: uppercase;
   }
 
-  .tally { display: flex; flex-direction: column; gap: 2px; padding: 12px 0; }
+  .tally { display: flex; flex: none; flex-direction: column; gap: 2px; padding: 12px 0; }
   .tally-row {
     display: flex;
     justify-content: space-between;
@@ -502,7 +537,17 @@
   }
   .tally-row.total .amt { color: var(--accent); }
 
-  .splits { display: flex; flex-direction: column; gap: 2px; }
+  /* Only the per-person list scrolls; the tally and the share button stay put.
+     min-height:0 lets this flex child shrink below its content height. */
+  .splits {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
 
   .split {
     border-top: 1px dashed var(--rule);
@@ -629,6 +674,7 @@
   }
 
   .receipt-foot {
+    flex: none;
     margin-top: 14px;
     padding-top: 12px;
     border-top: 1px solid var(--rule);
@@ -638,8 +684,11 @@
     text-align: center;
     letter-spacing: 0.08em;
   }
+  /* Only needed to clear the share button when one is present. */
+  .receipt-foot .btn + .receipt-thanks { margin-top: 12px; }
 
   .flag {
+    flex: none;
     margin-top: 10px;
     padding: 8px 10px;
     border: 1px solid var(--danger);
@@ -684,14 +733,24 @@
     opacity: 0;
     pointer-events: none;
     transition: opacity .18s ease, transform .18s ease;
-    z-index: 20;
+    /* Above the sheet and the photo zoom: most of what the toast has to say
+       is said while one of them is open, and at 20 it was painting behind
+       them — the copy confirmation never reached anyone. */
+    z-index: 50;
   }
   .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
   @media (max-width: 860px) {
     .wrap { padding: 20px 14px 120px; }
     .layout { grid-template-columns: 1fr; }
-    .receipt { position: static; }
+    /* Single column: the panel flows with the page and the fixed
+       totalbar carries the total + share, so drop the viewport cap. */
+    .receipt { position: static; max-height: none; }
+    .splits { overflow-y: visible; }
+    /* The fixed totalbar carries Share on this layout, so the panel's own
+       share button is a duplicate — drop it and leave the thank-you line to
+       close the receipt. */
+    .receipt-foot .btn { display: none; }
     .totalbar { display: flex; }
     .item-top { grid-template-columns: minmax(0, 1fr) 88px 28px; }
     .brand h1 { font-size: 21px; }
@@ -750,6 +809,17 @@
     padding: 12px 16px;
     border-top: 1px solid var(--rule);
     background: var(--surface);
+  }
+  /* Takes the whole line, so it wraps below the row's buttons instead of
+     crowding them. The footer already wraps; this just claims the width. */
+  .sheet-foot-wide {
+    flex: 0 0 100%;
+    margin-top: 2px;
+    padding-top: 10px;
+    /* Soft rather than --rule: the footer's own border is a few pixels up, and
+       two lines of the same weight read as a boxed-in strip. */
+    border-top: 1px solid var(--rule-soft);
+    text-align: center;
   }
 
   .progress {

@@ -84,7 +84,9 @@
       sharers.forEach((id) => {
         subtotals[id] += each;
         lines[id].push({
-          label: (it.name || "Item") + ": " + num(it.price).toFixed(2) + "/" + sharers.length,
+          // The divisor only earns its place when it actually divided something:
+          // "12.00/1" reads as a question rather than an explanation.
+          label: (it.name || "Item") + ": " + num(it.price).toFixed(2) + (sharers.length > 1 ? "/" + sharers.length : ""),
           amount: each
         });
       });
@@ -164,7 +166,20 @@
   var itemList = document.getElementById("itemList");
   var receipt = document.getElementById("receipt");
   var barTotal = document.getElementById("barTotal");
+  var splitEvenBtn = document.getElementById("splitEven");
+  function splitEvenlyOn() {
+    return !!state.people.length && !!state.items.length && state.items.every(function(it) {
+      return state.people.every(function(p) {
+        return it.shared.indexOf(p.id) !== -1;
+      });
+    });
+  }
+  function renderSplitEven() {
+    splitEvenBtn.hidden = !(state.people.length && state.items.length);
+    splitEvenBtn.setAttribute("aria-pressed", splitEvenlyOn() ? "true" : "false");
+  }
   function renderPeople() {
+    renderSplitEven();
     peopleList.textContent = "";
     if (!state.people.length) {
       peopleList.appendChild(el("div", "empty", "Add the people splitting this receipt."));
@@ -205,6 +220,7 @@
     });
   }
   function renderItems() {
+    renderSplitEven();
     itemList.textContent = "";
     if (!state.items.length) {
       itemList.appendChild(el("div", "empty", state.people.length ? "No items yet \u2014 add the first line off the receipt, or scan it." : "Scan the receipt or add items, then describe who had what."));
@@ -280,6 +296,7 @@
             return !!personById(id);
           }).length);
           updateNote(row, it);
+          renderSplitEven();
           renderReceipt();
           save();
         });
@@ -430,9 +447,8 @@
       shareBtn.style.justifyContent = "center";
       shareBtn.addEventListener("click", showShare);
       shareRow.appendChild(shareBtn);
-    } else {
-      shareRow.textContent = "\u2014 THANK YOU \u2014";
     }
+    shareRow.appendChild(el("div", "receipt-thanks", "\u2014 THANK YOU \u2014"));
     receipt.appendChild(shareRow);
     barTotal.textContent = money(r.grand);
     renderTipPresets(r);
@@ -811,6 +827,19 @@
     if (inputs.length) inputs[inputs.length - 1].focus();
   }
   document.getElementById("addItem").addEventListener("click", addItem);
+  splitEvenBtn.addEventListener("click", function() {
+    var on = splitEvenlyOn();
+    var everyone = state.people.map(function(p) {
+      return p.id;
+    });
+    state.items.forEach(function(it) {
+      it.shared = on ? [] : everyone.slice();
+    });
+    renderItems();
+    renderReceipt();
+    save();
+    say(on ? "Cleared every assignment" : "Every item split across everyone");
+  });
   document.getElementById("addPerson").addEventListener("click", function() {
     state.people.push({ id: uid(), name: "Person " + (state.people.length + 1) });
     renderAll();
@@ -893,47 +922,7 @@
       toast.classList.remove("show");
     }, 1900);
   }
-  function summaryText() {
-    var r = compute2();
-    var out = [];
-    r.ids.forEach(function(id) {
-      out.push(nameOf(id) + ":");
-      r.lines[id].forEach(function(l) {
-        out.push("- " + l.label + " = " + l.amount.toFixed(2));
-      });
-      out.push("- subtotal: " + r.subtotals[id].toFixed(2));
-      out.push("- tax+tip: (" + r.subtotals[id].toFixed(2) + "/" + r.assigned.toFixed(2) + ") * " + r.extra.toFixed(2));
-      out.push("- total: " + r.totals[id].toFixed(2));
-      out.push("");
-    });
-    return out.join("\n").trim();
-  }
-  function copyText(text, okMsg) {
-    var done = function() {
-      say(okMsg);
-    };
-    var fallback = function() {
-      var ta = document.createElement("textarea");
-      ta.value = text;
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      try {
-        document.execCommand("copy");
-        done();
-      } catch (e) {
-        say("Couldn't copy \u2014 select the text and copy manually");
-      }
-      document.body.removeChild(ta);
-    };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(done, fallback);
-    } else {
-      fallback();
-    }
-  }
-  var IMG = {
+  var IMG_FALLBACK = {
     bg: "#141A18",
     ink: "#EDF2ED",
     soft: "#B9C2BC",
@@ -943,6 +932,25 @@
     accent: "#5FCCAC",
     people: ["#E07457", "#5A9BD0", "#9C80D2", "#C1992A", "#CE6791", "#2BA3B0"]
   };
+  var IMG = IMG_FALLBACK;
+  function imagePalette() {
+    var cs = getComputedStyle(document.documentElement);
+    var pick = function(token, fallback) {
+      return cs.getPropertyValue(token).trim() || fallback;
+    };
+    return {
+      bg: pick("--surface", IMG_FALLBACK.bg),
+      ink: pick("--ink", IMG_FALLBACK.ink),
+      soft: pick("--ink-soft", IMG_FALLBACK.soft),
+      muted: pick("--muted", IMG_FALLBACK.muted),
+      rule: pick("--rule", IMG_FALLBACK.rule),
+      faint: pick("--rule-soft", IMG_FALLBACK.faint),
+      accent: pick("--accent", IMG_FALLBACK.accent),
+      people: IMG_FALLBACK.people.map(function(fallback, i) {
+        return pick("--p" + (i + 1), fallback);
+      })
+    };
+  }
   var SANS = 'ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif';
   var MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
   function colorIndexOf(id) {
@@ -1041,11 +1049,12 @@
       rule(IMG.rule, [3, 4]);
     });
     y += 30;
-    put("split-gilt-pi.vercel.app", W / 2, "12px " + MONO, IMG.muted, "center");
+    put("split.rahulsetia.me", W / 2, "12px " + MONO, IMG.muted, "center");
     return y + pad - 12;
   }
   function summaryCanvas() {
     var r = compute2();
+    IMG = imagePalette();
     var W = 880, scale = 2;
     var probe = document.createElement("canvas").getContext("2d");
     var H = Math.round(paintSummary(probe, W, r, false));
@@ -1060,18 +1069,43 @@
     paintSummary(ctx, W, r, true);
     return c;
   }
-  async function shareImage() {
-    var canvas;
-    try {
-      canvas = summaryCanvas();
-    } catch (e) {
-      say("Couldn't build the image");
+  function summaryBlob() {
+    return new Promise(function(resolve, reject) {
+      var canvas;
+      try {
+        canvas = summaryCanvas();
+      } catch (e) {
+        reject(e);
+        return;
+      }
+      canvas.toBlob(function(b) {
+        if (b) resolve(b);
+        else reject(new Error("toBlob gave nothing"));
+      }, "image/png");
+    });
+  }
+  function copyImage() {
+    if (!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem)) {
+      shareImage();
       return;
     }
-    var blob = await new Promise(function(resolve) {
-      canvas.toBlob(resolve, "image/png");
+    var pending = summaryBlob();
+    pending.catch(function() {
     });
-    if (!blob) {
+    navigator.clipboard.write([new ClipboardItem({ "image/png": pending })]).then(
+      function() {
+        say("Image copied");
+      },
+      function() {
+        say("Couldn't copy the image \u2014 try Share image");
+      }
+    );
+  }
+  async function shareImage() {
+    var blob;
+    try {
+      blob = await summaryBlob();
+    } catch (e) {
       say("Couldn't build the image");
       return;
     }
@@ -1144,8 +1178,7 @@
       block.appendChild(body);
       sheetBody.appendChild(block);
     });
-    var done = el("div");
-    done.style.cssText = "margin-top:18px; padding-top:14px; border-top:1px solid var(--rule); text-align:center;";
+    var done = el("div", "sheet-foot-wide");
     var fresh = el("button", "btn btn-quiet", "Done \u2014 start a new receipt");
     fresh.type = "button";
     fresh.addEventListener("click", function() {
@@ -1155,30 +1188,16 @@
       }
     });
     done.appendChild(fresh);
-    sheetBody.appendChild(done);
     var canShareFiles = !!(navigator.canShare && navigator.share);
-    var copy = el("button", "btn", "Copy text");
+    var copy = el("button", "btn", "Copy image");
     copy.type = "button";
-    copy.addEventListener("click", function() {
-      copyText(summaryText(), "Copied");
-    });
-    var image = el("button", "btn", canShareFiles ? "Share image" : "Save image");
+    copy.title = "Put the same picture straight on your clipboard";
+    copy.addEventListener("click", copyImage);
+    var image = el("button", "btn btn-solid", canShareFiles ? "Share image" : "Save image");
     image.type = "button";
     image.title = "A clean picture of this summary, ready to drop into a chat";
     image.addEventListener("click", shareImage);
-    var foot = [copy, image];
-    if (navigator.share) {
-      var share = el("button", "btn btn-solid", "Share text");
-      share.type = "button";
-      share.addEventListener("click", function() {
-        navigator.share({ title: "Receipt split", text: summaryText() }).catch(function() {
-        });
-      });
-      foot.push(share);
-    } else {
-      image.className = "btn btn-solid";
-    }
-    setFoot(foot);
+    setFoot([copy, image, done]);
   }
   document.getElementById("barShareBtn").addEventListener("click", showShare);
   document.getElementById("stamp").textContent = (/* @__PURE__ */ new Date()).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }).toLowerCase() + " \xB7 who owes what, to the cent";

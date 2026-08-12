@@ -42,8 +42,26 @@ var peopleList = document.getElementById("peopleList");
 var itemList = document.getElementById("itemList");
 var receipt = document.getElementById("receipt");
 var barTotal = document.getElementById("barTotal");
+var splitEvenBtn = document.getElementById("splitEven");
+
+// Lit only while it is literally true of every item, so the chip keeps
+// reflecting reality once individual chips are tweaked underneath it.
+function splitEvenlyOn() {
+  return !!state.people.length && !!state.items.length &&
+    state.items.every(function (it) {
+      return state.people.every(function (p) { return it.shared.indexOf(p.id) !== -1; });
+    });
+}
+
+// Nothing to split evenly until there are both people and items, and an
+// offer to do it would only be confusing before then.
+function renderSplitEven() {
+  splitEvenBtn.hidden = !(state.people.length && state.items.length);
+  splitEvenBtn.setAttribute("aria-pressed", splitEvenlyOn() ? "true" : "false");
+}
 
 function renderPeople() {
+  renderSplitEven();
   peopleList.textContent = "";
   if (!state.people.length) {
     peopleList.appendChild(el("div", "empty", "Add the people splitting this receipt."));
@@ -84,6 +102,7 @@ function renderPeople() {
 }
 
 function renderItems() {
+  renderSplitEven();
   itemList.textContent = "";
   if (!state.items.length) {
     itemList.appendChild(el("div", "empty", state.people.length
@@ -155,6 +174,9 @@ function renderItems() {
         chip.setAttribute("aria-pressed", i === -1 ? "true" : "false");
         row.classList.toggle("orphan", !it.shared.filter(function (id) { return !!personById(id); }).length);
         updateNote(row, it);
+        // This handler patches the row in place instead of re-rendering, so the
+        // bulk chip above the list has to be told the truth changed.
+        renderSplitEven();
         renderReceipt();
         save();
       });
@@ -306,6 +328,9 @@ function renderReceipt() {
   });
   receipt.appendChild(splits);
 
+  // The thank-you line closes the receipt whatever state it is in — a real one
+  // prints it once the bill is settled, and it gives the torn edge a footer on
+  // mobile, where the fixed totalbar owns the share action.
   var shareRow = el("div", "receipt-foot");
   if (r.ids.length && state.items.length) {
     var shareBtn = el("button", "btn btn-solid", "Share the split");
@@ -314,9 +339,8 @@ function renderReceipt() {
     shareBtn.style.justifyContent = "center";
     shareBtn.addEventListener("click", showShare);
     shareRow.appendChild(shareBtn);
-  } else {
-    shareRow.textContent = "— THANK YOU —";
   }
+  shareRow.appendChild(el("div", "receipt-thanks", "— THANK YOU —"));
   receipt.appendChild(shareRow);
 
   barTotal.textContent = money(r.grand);
@@ -695,6 +719,20 @@ function addItem() {
 
 document.getElementById("addItem").addEventListener("click", addItem);
 
+// Toggles like the per-item EVERYONE chip: on when nobody is on everything,
+// and off back to a blank slate. Each item gets its own copy of the id list —
+// the per-item chips mutate it.shared in place, so one shared array would make
+// a single chip move everybody.
+splitEvenBtn.addEventListener("click", function () {
+  var on = splitEvenlyOn();
+  var everyone = state.people.map(function (p) { return p.id; });
+  state.items.forEach(function (it) { it.shared = on ? [] : everyone.slice(); });
+  renderItems();
+  renderReceipt();
+  save();
+  say(on ? "Cleared every assignment" : "Every item split across everyone");
+});
+
 document.getElementById("addPerson").addEventListener("click", function () {
   state.people.push({ id: uid(), name: "Person " + (state.people.length + 1) });
   renderAll();
@@ -786,51 +824,39 @@ function say(msg) {
   toastTimer = setTimeout(function () { toast.classList.remove("show"); }, 1900);
 }
 
-// The plain-text form mirrors the original script's output line for line.
-function summaryText() {
-  var r = compute();
-  var out = [];
-  r.ids.forEach(function (id) {
-    out.push(nameOf(id) + ":");
-    r.lines[id].forEach(function (l) {
-      out.push("- " + l.label + " = " + l.amount.toFixed(2));
-    });
-    out.push("- subtotal: " + r.subtotals[id].toFixed(2));
-    out.push("- tax+tip: (" + r.subtotals[id].toFixed(2) + "/" +
-             r.assigned.toFixed(2) + ") * " + r.extra.toFixed(2));
-    out.push("- total: " + r.totals[id].toFixed(2));
-    out.push("");
-  });
-  return out.join("\n").trim();
-}
-
-function copyText(text, okMsg) {
-  var done = function () { say(okMsg); };
-  var fallback = function () {
-    var ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand("copy"); done(); }
-    catch (e) { say("Couldn't copy — select the text and copy manually"); }
-    document.body.removeChild(ta);
-  };
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(text).then(done, fallback);
-  } else { fallback(); }
-}
-
-// The shared image is deliberately light-themed and self-contained: it gets
-// pasted into someone else's chat, where our dark palette would read as
-// broken. Drawn on a canvas rather than screenshotting the DOM so there's
-// no library and no dependence on how the page happens to be laid out.
-var IMG = {
+// Drawn on a canvas rather than screenshotting the DOM so there's no library
+// and no dependence on how the page happens to be laid out. The colours are
+// read off the live theme tokens at draw time instead of being a second
+// hard-coded palette: the picture then matches the receipt the sender is
+// looking at in either theme, however it was chosen — data-theme or the OS
+// preference — and the person colours cannot drift from their chips, which
+// are var(--p1..6) already. The literals are only a fallback for a draw that
+// somehow beats the stylesheet.
+var IMG_FALLBACK = {
   bg: "#141A18", ink: "#EDF2ED", soft: "#B9C2BC", muted: "#8B968F",
   rule: "#39443F", faint: "#252D2A", accent: "#5FCCAC",
   people: ["#E07457", "#5A9BD0", "#9C80D2", "#C1992A", "#CE6791", "#2BA3B0"],
 };
+var IMG = IMG_FALLBACK;
+
+function imagePalette() {
+  var cs = getComputedStyle(document.documentElement);
+  var pick = function (token, fallback) {
+    return cs.getPropertyValue(token).trim() || fallback;
+  };
+  return {
+    bg: pick("--surface", IMG_FALLBACK.bg),
+    ink: pick("--ink", IMG_FALLBACK.ink),
+    soft: pick("--ink-soft", IMG_FALLBACK.soft),
+    muted: pick("--muted", IMG_FALLBACK.muted),
+    rule: pick("--rule", IMG_FALLBACK.rule),
+    faint: pick("--rule-soft", IMG_FALLBACK.faint),
+    accent: pick("--accent", IMG_FALLBACK.accent),
+    people: IMG_FALLBACK.people.map(function (fallback, i) {
+      return pick("--p" + (i + 1), fallback);
+    }),
+  };
+}
 var SANS = 'ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif';
 var MONO = 'ui-monospace, "SF Mono", Menlo, Consolas, monospace';
 
@@ -928,13 +954,16 @@ function paintSummary(ctx, W, r, draw) {
   });
 
   y += 30;
-  put("split-gilt-pi.vercel.app", W / 2, '12px ' + MONO, IMG.muted, "center");
+  put("split.rahulsetia.me", W / 2, '12px ' + MONO, IMG.muted, "center");
 
   return y + pad - 12;
 }
 
 function summaryCanvas() {
   var r = compute();
+  // Resolved once per image so the measuring pass and the painting pass cannot
+  // disagree, and so a theme switch mid-session is picked up.
+  IMG = imagePalette();
   var W = 880, scale = 2;
   var probe = document.createElement("canvas").getContext("2d");
   var H = Math.round(paintSummary(probe, W, r, false));
@@ -951,18 +980,41 @@ function summaryCanvas() {
   return c;
 }
 
+function summaryBlob() {
+  return new Promise(function (resolve, reject) {
+    var canvas;
+    try { canvas = summaryCanvas(); }
+    catch (e) { reject(e); return; }
+    canvas.toBlob(function (b) {
+      if (b) resolve(b);
+      else reject(new Error("toBlob gave nothing"));
+    }, "image/png");
+  });
+}
+
+// Safari only permits a clipboard write in the same task as the click, so the
+// ClipboardItem gets the pending blob rather than an awaited one.
+function copyImage() {
+  if (!(navigator.clipboard && navigator.clipboard.write && window.ClipboardItem)) {
+    shareImage(); // older browsers: fall back to sharing or saving the file
+    return;
+  }
+  var pending = summaryBlob();
+  pending.catch(function () {}); // surfaced by the write() rejection below
+  navigator.clipboard.write([new ClipboardItem({ "image/png": pending })]).then(
+    function () { say("Image copied"); },
+    function () { say("Couldn't copy the image — try Share image"); }
+  );
+}
+
 async function shareImage() {
-  var canvas;
+  var blob;
   try {
-    canvas = summaryCanvas();
+    blob = await summaryBlob();
   } catch (e) {
     say("Couldn't build the image");
     return;
   }
-  var blob = await new Promise(function (resolve) {
-    canvas.toBlob(resolve, "image/png");
-  });
-  if (!blob) { say("Couldn't build the image"); return; }
 
   var file = null;
   try { file = new File([blob], "split.png", { type: "image/png" }); } catch (e) {}
@@ -1035,9 +1087,11 @@ function showShare() {
 
   // Sharing is the end of the job, so this is where "what now?" gets asked.
   // Without it the only way back to a blank slate is Clear all at the top,
-  // which reads as destructive rather than as finishing.
-  var done = el("div");
-  done.style.cssText = "margin-top:18px; padding-top:14px; border-top:1px solid var(--rule); text-align:center;";
+  // which reads as destructive rather than as finishing. It lives in the footer
+  // rather than at the end of the body, which scrolls out of reach once there
+  // are a few people, but on its own line: beside the share buttons it would
+  // put "wipe everything" next to the primary action.
+  var done = el("div", "sheet-foot-wide");
   var fresh = el("button", "btn btn-quiet", "Done — start a new receipt");
   fresh.type = "button";
   fresh.addEventListener("click", function () {
@@ -1047,32 +1101,20 @@ function showShare() {
     }
   });
   done.appendChild(fresh);
-  sheetBody.appendChild(done);
 
   var canShareFiles = !!(navigator.canShare && navigator.share);
 
-  var copy = el("button", "btn", "Copy text");
+  var copy = el("button", "btn", "Copy image");
   copy.type = "button";
-  copy.addEventListener("click", function () { copyText(summaryText(), "Copied"); });
+  copy.title = "Put the same picture straight on your clipboard";
+  copy.addEventListener("click", copyImage);
 
-  var image = el("button", "btn", canShareFiles ? "Share image" : "Save image");
+  var image = el("button", "btn btn-solid", canShareFiles ? "Share image" : "Save image");
   image.type = "button";
   image.title = "A clean picture of this summary, ready to drop into a chat";
   image.addEventListener("click", shareImage);
 
-  var foot = [copy, image];
-  if (navigator.share) {
-    var share = el("button", "btn btn-solid", "Share text");
-    share.type = "button";
-    share.addEventListener("click", function () {
-      navigator.share({ title: "Receipt split", text: summaryText() })
-        .catch(function () { /* user dismissed the share sheet */ });
-    });
-    foot.push(share);
-  } else {
-    image.className = "btn btn-solid";
-  }
-  setFoot(foot);
+  setFoot([copy, image, done]);
 }
 
 document.getElementById("barShareBtn").addEventListener("click", showShare);
