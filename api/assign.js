@@ -1,4 +1,4 @@
-import { authorize, makeDailyLimiter } from "./_shared.js";
+import { authorize, makeDailyLimiter, upstreamDetail } from "./_shared.js";
 import { ENGINES, ProviderError } from "./_providers.js";
 import { assignSplit } from "./_assist.js";
 
@@ -46,14 +46,17 @@ export default async function handler(req, res) {
       return res.status(err.status).json({ error: err.message });
     }
     const status = Number(err?.status) || 0;
-    const detail = String(err?.message || err || "").slice(0, 400);
-    console.error("[assign] engine=%s status=%s %s", engine, status || "?", detail);
+    const detail = upstreamDetail(err);
+    console.error("[assign] engine=%s status=%s %s", engine, status || "?", String(err?.message || err).slice(0, 400));
 
     if (status === 401 || status === 403) {
       return res.status(503).json({ error: "The server's API key was rejected.", detail });
     }
     if (status === 429) {
       return res.status(429).json({ error: "Rate limited upstream. Try again in a moment.", detail });
+    }
+    if (status >= 500) {
+      return res.status(503).json({ error: "Google's AI is overloaded right now. Wait a minute, or assign by tapping names." });
     }
     return res.status(502).json({ error: "Couldn't reach the assistant. Assign by tapping names instead.", detail });
   }

@@ -30,6 +30,24 @@ export function authorize(req) {
 }
 
 /**
+ * The Gemini SDK puts the raw JSON error body in `message`. Pull out the human
+ * sentence so the client doesn't show `{"error":{"code":503,...}}` verbatim.
+ */
+export function upstreamDetail(err) {
+  const raw = String(err?.message || err || "");
+  const start = raw.indexOf("{");
+  if (start !== -1) {
+    try {
+      const msg = JSON.parse(raw.slice(start))?.error?.message;
+      if (typeof msg === "string" && msg) return msg.slice(0, 400);
+    } catch {
+      /* not JSON — use it as is */
+    }
+  }
+  return raw.slice(0, 400);
+}
+
+/**
  * Best-effort daily ceiling. Serverless instances are ephemeral and can run in
  * parallel, so this bounds one warm instance rather than the deployment — a
  * backstop against a runaway client loop, not a billing guarantee.

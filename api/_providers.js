@@ -90,11 +90,57 @@ async function callGeminiOnce({ ai, model, system, schema, parts }) {
   };
 }
 
+// Overload ("503 This model is currently experiencing high demand") is per
+// model and usually passes within seconds, so a busy model gets one short
+// retry and then the request moves down this chain instead of failing. A 429
+// skips the retry: free-tier quotas are per model per minute, so waiting a
+// second won't help but another model might. Fallbacks missing from the key
+// are skipped, so a retired id here costs one quick 404, not an outage.
+const TRANSIENT = new Set([429, 500, 502, 503, 504]);
+const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash-lite,gemini-flash-latest")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+// No new attempt starts after this long, so the chain fits inside the route's
+// maxDuration (30s for assign, 60s for scan) with room for the final call.
+const RETRY_WINDOW_MS = 20_000;
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Calls `callOnce(model)` down `models` until one succeeds. A 404 on the first
+ * model is thrown at once so the caller can look up a replacement; a 404 on a
+ * fallback is skipped without replacing the earlier, more telling error.
+ */
+export async function tryModels(models, callOnce, { pause = wait, windowMs = RETRY_WINDOW_MS, now = Date.now } = {}) {
+  const started = now();
+  let lastErr;
+  for (const [index, model] of models.entries()) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (lastErr && now() - started > windowMs) throw lastErr;
+      try {
+        return await callOnce(model);
+      } catch (err) {
+        const status = Number(err?.status);
+        if (status === 404 && index > 0) break;
+        lastErr = err;
+        if (!TRANSIENT.has(status)) throw err;
+        if (status === 429 || attempt === 1) break;
+        await pause(700 + Math.random() * 800);
+      }
+    }
+  }
+  throw lastErr;
+}
+
 async function callGemini({ apiKey, model, system, schema, parts }) {
   const ai = new GoogleGenAI({ apiKey });
   const first = resolvedGeminiModel || model;
+  const chain = [first, ...FALLBACK_MODELS.filter((m) => m !== first)];
   try {
-    return await callGeminiOnce({ ai, model: first, system, schema, parts });
+    const result = await tryModels(chain, (m) => callGeminiOnce({ ai, model: m, system, schema, parts }));
+    if (result.model !== first) console.log("[gemini] %s busy; answered by %s", first, result.model);
+    return result;
   } catch (err) {
     if (Number(err?.status) !== 404) throw err;
 
