@@ -89,6 +89,91 @@ test("a sharer who was deleted is ignored", () => {
   assert.equal(r.totals.a, 10, "price divides among surviving sharers only");
 });
 
+// -- bill-level discount ---------------------------------------------------
+
+const discounted = (items, people, discount, tax = 0, tip = 0) => ({
+  ...stateOf(items, people, tax, tip),
+  discount,
+});
+
+test("a bill-level discount comes off in proportion to what each person ordered", () => {
+  // A ordered 75 of the 100, so A absorbs 75% of the 20 off.
+  const r = compute(discounted(
+    [item("1", "Steak", 75, ["a"]), item("2", "Salad", 25, ["b"])],
+    [person("a", "A"), person("b", "B")], { mode: "amt", value: 20 }));
+  assert.equal(r.discount, 20);
+  assert.equal(r.base, 80);
+  assert.equal(r.grand, 80);
+  assert.equal(r.totals.a, 60);
+  assert.equal(r.totals.b, 20);
+});
+
+test("a percentage discount is a percentage of the subtotal", () => {
+  const r = compute(discounted([item("1", "Meal", 82, ["a"])], [person("a", "A")],
+    { mode: "pct", value: 20 }));
+  assert.equal(r.discount, 16.4);
+  assert.equal(r.base, 65.6);
+});
+
+test("percentage tax and tip run off the discounted subtotal", () => {
+  const withPct = compute({
+    ...discounted([item("1", "Meal", 100, ["a"])], [person("a", "A")],
+      { mode: "pct", value: 20 }),
+    tax: { mode: "pct", value: 10 },
+    tip: { mode: "pct", value: 20 },
+  });
+  assert.equal(withPct.base, 80);
+  assert.equal(withPct.tax, 8, "10% of 80, not of 100");
+  assert.equal(withPct.tip, 16);
+  assert.equal(withPct.grand, 104);
+});
+
+test("a discount larger than the bill is capped instead of paying people back", () => {
+  const r = compute(discounted([item("1", "Coffee", 4, ["a"])], [person("a", "A")],
+    { mode: "amt", value: 50 }));
+  assert.equal(r.discount, 4);
+  assert.equal(r.discountCapped, true);
+  assert.equal(r.grand, 0);
+  assert.equal(r.totals.a, 0);
+});
+
+test("a discount does not disturb the exact-cent rounding", () => {
+  const all = ["a", "b", "c"];
+  const r = compute(discounted([
+    item("1", "Bounty", 31.34, all), item("2", "Cascade", 15.39, all),
+    item("3", "TP", 23.09, all), item("4", "Tide", 27.49, ["a", "b"]),
+    item("5", "Milk", 2.83, ["a"]),
+  ], [person("a", "Rahul"), person("b", "Smyan"), person("c", "Arjun")],
+    { mode: "pct", value: 15 }, 6.11, 9.37));
+
+  const sum = r.ids.reduce((s, id) => s + r.totals[id], 0);
+  assert.equal(Number(sum.toFixed(2)), Number(r.grand.toFixed(2)));
+});
+
+test("each breakdown adds up to the rounded total beside the name", () => {
+  const all = ["a", "b", "c"];
+  const r = compute(discounted([
+    item("1", "Bounty", 31.34, all), item("2", "Tide", 27.49, ["a", "b"]),
+    item("3", "Milk", 2.83, ["a"]),
+  ], [person("a", "A"), person("b", "B"), person("c", "C")],
+    { mode: "amt", value: 7.77 }, 4.13, 8.29));
+
+  r.ids.forEach((id) => {
+    const shown = r.subtotals[id] - r.parts[id].discount + r.parts[id].extra;
+    assert.equal(Number(shown.toFixed(4)), r.totals[id],
+      "the three printed lines must reconcile to the printed total");
+  });
+});
+
+test("no discount leaves the parts and the old totals identical", () => {
+  const r = compute(stateOf([item("1", "Meal", 40, ["a", "b"])],
+    [person("a", "A"), person("b", "B")], 4, 6));
+  r.ids.forEach((id) => {
+    assert.equal(r.parts[id].discount, 0);
+    assert.equal(r.parts[id].extra, r.totals[id] - r.subtotals[id]);
+  });
+});
+
 test("negative prices (discounts) flow through", () => {
   const r = compute(stateOf(
     [item("1", "Item", 20, ["a"]), item("2", "Coupon", -5, ["a"])],

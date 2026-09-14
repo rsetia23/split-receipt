@@ -11,6 +11,7 @@ export function seed() {
     items: [],
     tax: { mode: "amt", value: 0 },
     tip: { mode: "amt", value: 0 },
+    discount: { mode: "amt", value: 0 },
     open: {},
   };
 }
@@ -20,6 +21,9 @@ export function loadState() {
     const saved = JSON.parse(localStorage.getItem(KEY));
     const state = saved && Array.isArray(saved.people) ? saved : seed();
     if (!state.open) state.open = {};
+    // Backfilled rather than versioned: a receipt saved before discounts
+    // existed is still a valid receipt, and reopening it must not lose it.
+    if (!state.discount) state.discount = { mode: "amt", value: 0 };
     return state;
   } catch (e) {
     return seed();

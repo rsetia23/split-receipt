@@ -28,6 +28,22 @@ test("a fresh receipt starts empty", () => {
   assert.deepEqual(s.items, []);
   assert.equal(s.tax.value, 0);
   assert.equal(s.tip.value, 0);
+  assert.equal(s.discount.value, 0);
+});
+
+test("a receipt saved before discounts existed still opens", () => {
+  withStorage((real) => {
+    real.setItem(KEY, JSON.stringify({
+      people: [{ id: "a", name: "Rahul" }],
+      items: [{ id: "1", name: "Milk", price: 2.83, shared: ["a"] }],
+      tax: { mode: "amt", value: 0.2 },
+      tip: { mode: "amt", value: 0 },
+      open: {},
+    }));
+    const s = loadState();
+    assert.equal(s.people[0].name, "Rahul", "the old receipt survives");
+    assert.deepEqual(s.discount, { mode: "amt", value: 0 }, "and gains a discount field");
+  });
 });
 
 test("round-trips a receipt through storage", () => {

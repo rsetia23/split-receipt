@@ -221,7 +221,7 @@ function updateNote(row, it) {
 }
 
 function renderCharges() {
-  ["tax", "tip"].forEach(function (k) {
+  ["tax", "tip", "discount"].forEach(function (k) {
     var input = document.querySelector('[data-charge="' + k + '"]');
     if (document.activeElement !== input) {
       input.value = state[k].value === 0 ? "" : String(state[k].value);
@@ -231,6 +231,18 @@ function renderCharges() {
       b.setAttribute("aria-pressed", b.dataset.mode === k + ":" + state[k].mode ? "true" : "false");
     });
   });
+}
+
+// One wording for a charge everywhere it is printed, so the receipt, the share
+// sheet, and the picture can't describe the same number three different ways.
+function pctLabel(k) {
+  return state[k].mode === "pct" ? " (" + num(state[k].value) + "%)" : "";
+}
+
+// "(23.09/176.52) * 26.39" — the arithmetic that produced this person's cut of
+// a whole-bill charge, shown rather than asserted.
+function allocLabel(r, id, amount) {
+  return "(" + r.subtotals[id].toFixed(2) + "/" + r.assigned.toFixed(2) + ") * " + amount.toFixed(2);
 }
 
 function renderReceipt() {
@@ -251,10 +263,20 @@ function renderReceipt() {
     tally.appendChild(row);
   };
   line("Subtotal", r.assigned);
-  line("Tax" + (state.tax.mode === "pct" ? " (" + num(state.tax.value) + "%)" : ""), r.tax);
-  line("Tip" + (state.tip.mode === "pct" ? " (" + num(state.tip.value) + "%)" : ""), r.tip);
+  // A zero discount line is noise on the great majority of receipts, so it
+  // appears only once there is one — unlike tax and tip, which nearly always
+  // have a number and read as missing when absent.
+  if (r.discount > 0) line("Discount" + pctLabel("discount"), -r.discount, "credit");
+  line("Tax" + pctLabel("tax"), r.tax);
+  line("Tip" + pctLabel("tip"), r.tip);
   line("Total", r.grand, "total");
   receipt.appendChild(tally);
+
+  if (r.discountCapped) {
+    receipt.appendChild(el("div", "flag",
+      "That discount is bigger than the items, so it's capped at " +
+      money(r.discount) + " — the bill can't go below zero."));
+  }
 
   if (r.orphans.length) {
     receipt.appendChild(el("div", "flag",
@@ -280,7 +302,8 @@ function renderReceipt() {
     left.appendChild(el("div", "split-name", nameOf(id)));
     left.appendChild(el("div", "split-meta",
       r.lines[id].length + (r.lines[id].length === 1 ? " item" : " items") +
-      " · " + Math.round(r.shares[id] * 100) + "% of tax+tip"));
+      " · " + Math.round(r.shares[id] * 100) + "% of " +
+      (r.discount > 0 ? "the extras" : "tax+tip")));
     h.appendChild(left);
     h.appendChild(el("div", "split-amt", money(r.totals[id])));
 
@@ -309,10 +332,17 @@ function renderReceipt() {
       sub.appendChild(el("span", null, money(r.subtotals[id])));
       ul.appendChild(sub);
 
+      if (r.discount > 0) {
+        var disc = document.createElement("li");
+        disc.className = "credit";
+        disc.appendChild(el("span", null, "discount: " + allocLabel(r, id, r.discount)));
+        disc.appendChild(el("span", null, money(-r.parts[id].discount)));
+        ul.appendChild(disc);
+      }
+
       var ex = document.createElement("li");
-      ex.appendChild(el("span", null, "tax+tip: (" + r.subtotals[id].toFixed(2) +
-        "/" + r.assigned.toFixed(2) + ") * " + r.extra.toFixed(2)));
-      ex.appendChild(el("span", null, money(r.totals[id] - r.subtotals[id])));
+      ex.appendChild(el("span", null, "tax+tip: " + allocLabel(r, id, r.extra)));
+      ex.appendChild(el("span", null, money(r.parts[id].extra)));
       ul.appendChild(ex);
 
       var tot = document.createElement("li");
@@ -533,7 +563,7 @@ function showAssignPreview(instruction, data) {
       .filter(function (id) { return !!personById(id); })
       .map(function (id) { return nameKey(nameOf(id)); })
       .sort();
-    return next.join(" ") !== now.join(" ");
+    return next.join("\u0000") !== now.join("\u0000");
   });
 
   sheetBody.appendChild(el("p", "scan-hint", "“" + instruction + "”"));
@@ -781,16 +811,18 @@ document.querySelectorAll("[data-mode]").forEach(function (btn) {
 
 // Tip shortcuts. Set as a percentage rather than a fixed amount so the tip
 // still tracks the bill if items change afterwards, and computed off the
-// pre-tax subtotal — the convention, and the base the app already uses.
+// pre-tax, post-discount subtotal — the convention, and the base the app
+// already uses. To tip on the full pre-discount amount instead, switch the
+// field to $ and type it.
 var TIP_PRESETS = [15, 18, 20, 22];
 var tipPresets = document.getElementById("tipPresets");
 
 function renderTipPresets(r) {
   tipPresets.textContent = "";
-  if (!r || !(r.assigned > 0)) return;
+  if (!r || !(r.base > 0)) return;
 
   TIP_PRESETS.forEach(function (pct) {
-    var amount = r.assigned * pct / 100;
+    var amount = r.base * pct / 100;
     var b = el("button", null, pct + "%");
     b.type = "button";
     b.appendChild(el("span", null, money(amount)));
@@ -807,12 +839,28 @@ function renderTipPresets(r) {
   });
 }
 
+// Each field says the same number the other way round: type a percent and it
+// tells you the dollars, type dollars and it tells you the percent. The base
+// is named once a discount is in play, because "8% of subtotal" would then be
+// quietly wrong — tax and tip percentages run off what's left after it.
 function renderHints() {
   var r = compute();
-  document.getElementById("taxHint").textContent =
-    state.tax.mode === "pct" ? "= " + money(r.tax) : (r.assigned > 0 ? (r.tax / r.assigned * 100).toFixed(2) + "% of subtotal" : "");
-  document.getElementById("tipHint").textContent =
-    state.tip.mode === "pct" ? "= " + money(r.tip) : (r.assigned > 0 ? (r.tip / r.assigned * 100).toFixed(2) + "% of subtotal" : "");
+  var of = r.discount > 0 ? "% of the discounted " + r.base.toFixed(2) : "% of subtotal";
+  var charge = function (k, amount) {
+    document.getElementById(k + "Hint").textContent =
+      state[k].mode === "pct" ? "= " + money(amount)
+        : (r.base > 0 ? (amount / r.base * 100).toFixed(2) + of : "");
+  };
+  charge("tax", r.tax);
+  charge("tip", r.tip);
+
+  var d = document.getElementById("discountHint");
+  d.classList.toggle("warn", !!r.discountCapped);
+  d.textContent = r.discountCapped
+    ? "capped at " + money(r.discount) + " — the items only come to that much"
+    : r.discount <= 0 ? "off the whole check, before tax and tip"
+      : state.discount.mode === "pct" ? "= " + money(r.discount) + " off"
+        : (r.assigned > 0 ? (r.discount / r.assigned * 100).toFixed(2) + "% off the subtotal" : "");
 }
 
 var toast = document.getElementById("toast");
@@ -906,7 +954,9 @@ function paintSummary(ctx, W, r, draw) {
       right, '14px ' + MONO, IMG.muted, "right");
 
   y += 24;
-  put("Subtotal " + money(r.assigned) + "   ·   Tax " + money(r.tax) + "   ·   Tip " + money(r.tip),
+  put("Subtotal " + money(r.assigned) +
+      (r.discount > 0 ? "   ·   Discount −" + money(r.discount) : "") +
+      "   ·   Tax " + money(r.tax) + "   ·   Tip " + money(r.tip),
       pad, '13px ' + MONO, IMG.muted);
 
   y += 22;
@@ -939,11 +989,17 @@ function paintSummary(ctx, W, r, draw) {
     put("subtotal", pad + 16, '13px ' + MONO, IMG.soft);
     put(r.subtotals[id].toFixed(2), right, '13px ' + MONO, IMG.soft, "right");
 
+    if (r.discount > 0) {
+      y += 21;
+      put(ellipsize(ctx, "discount: " + allocLabel(r, id, r.discount), labelMax),
+          pad + 16, '13px ' + MONO, IMG.muted);
+      put("-" + r.parts[id].discount.toFixed(2), right, '13px ' + MONO, IMG.muted, "right");
+    }
+
     y += 21;
-    put(ellipsize(ctx, "tax+tip: (" + r.subtotals[id].toFixed(2) + "/" +
-        r.assigned.toFixed(2) + ") * " + r.extra.toFixed(2), labelMax),
+    put(ellipsize(ctx, "tax+tip: " + allocLabel(r, id, r.extra), labelMax),
         pad + 16, '13px ' + MONO, IMG.muted);
-    put((r.totals[id] - r.subtotals[id]).toFixed(2), right, '13px ' + MONO, IMG.muted, "right");
+    put(r.parts[id].extra.toFixed(2), right, '13px ' + MONO, IMG.muted, "right");
 
     y += 23;
     put("total", pad + 16, '600 14px ' + MONO, IMG.ink);
@@ -1058,7 +1114,9 @@ function showShare() {
   var head = el("div", "share-head");
   var left = el("div");
   left.appendChild(el("span", "eyebrow", "Total"));
-  left.appendChild(el("div", null, money(r.assigned) + " + " + money(r.extra) + " tax & tip"));
+  left.appendChild(el("div", null, money(r.assigned) +
+    (r.discount > 0 ? " − " + money(r.discount) + " off" : "") +
+    " + " + money(r.extra) + " tax & tip"));
   head.appendChild(left);
   head.appendChild(el("div", "amt", money(r.grand)));
   sheetBody.appendChild(head);
@@ -1077,8 +1135,11 @@ function showShare() {
     };
     r.lines[id].forEach(function (l) { row(l.label, l.amount.toFixed(2)); });
     row("subtotal", r.subtotals[id].toFixed(2), "sub");
-    row("tax+tip: (" + r.subtotals[id].toFixed(2) + "/" + r.assigned.toFixed(2) +
-        ") * " + r.extra.toFixed(2), (r.totals[id] - r.subtotals[id]).toFixed(2));
+    if (r.discount > 0) {
+      row("discount: " + allocLabel(r, id, r.discount),
+          "-" + r.parts[id].discount.toFixed(2), "credit");
+    }
+    row("tax+tip: " + allocLabel(r, id, r.extra), r.parts[id].extra.toFixed(2));
     row("total", r.totals[id].toFixed(2), "grand");
 
     block.appendChild(body);
@@ -1246,7 +1307,8 @@ function preprocess(bmp, rect) {
 }
 
 // -- turning OCR text into candidate rows --------------------------------
-var NOISE = /(sub\s*-?\s*total|total|balance|amount\s+due|tax|tip|gratuity|change|cash|debit|credit|visa|master|amex|discover|card\b|acct|account|auth|approv|\bref\b|tender|payment|savings|coupon|loyalty|member|reward|points|thank|welcome|receipt|invoice|survey|cashier|register|server|table|guest|\bqty\b|items? sold|item count|www\.|\.com|http|store\s*#|tel\b|phone)/i;
+var NOISE = /(sub\s*-?\s*total|total|balance|amount\s+due|tax|tip|gratuity|change|cash|debit|credit|visa|master|amex|discover|card\b|acct|account|auth|approv|\bref\b|tender|payment|savings|coupon|discount|promo|loyalty|member|reward|points|thank|welcome|receipt|invoice|survey|cashier|register|server|table|guest|\bqty\b|items? sold|item count|www\.|\.com|http|store\s*#|tel\b|phone)/i;
+var DISCOUNT = /discount|coupon|promo|savings|\bcomp(ed|limentary)?\b|\d\s*%\s*off|\boff\b/i;
 var PRICE_AT_END = /(-?\$?\s*\d{1,4}[.,]\d{2})\s*[A-Za-z]{0,2}$/;
 
 function toNumber(raw) {
@@ -1255,7 +1317,7 @@ function toNumber(raw) {
 
 function parseReceipt(text) {
   var lines = text.split(/\r?\n/);
-  var items = [], found = { tax: null, tip: null, total: null, subtotal: null };
+  var items = [], found = { tax: null, tip: null, total: null, subtotal: null, discount: null };
 
   lines.forEach(function (rawLine) {
     var line = rawLine.replace(/\s+/g, " ").trim();
@@ -1268,7 +1330,11 @@ function parseReceipt(text) {
 
     if (NOISE.test(line)) {
       // Pull the useful totals out of the lines we're otherwise ignoring.
-      if (/\btips?\b|gratuity/i.test(line) && found.tip === null) found.tip = price;
+      // Discount first: "COUPON" lines get printed as a negative, and the
+      // total-ish words below would otherwise claim a line like
+      // "TOTAL SAVINGS -5.00". Stored positive — the sign is the field's job.
+      if (DISCOUNT.test(line) && found.discount === null) found.discount = Math.abs(price);
+      else if (/\btips?\b|gratuity/i.test(line) && found.tip === null) found.tip = price;
       else if (/\btax\b/i.test(line) && !/taxable/i.test(line) && found.tax === null) found.tax = price;
       else if (/sub\s*-?\s*total/i.test(line) && found.subtotal === null) found.subtotal = price;
       else if (/total/i.test(line)) found.total = price;
@@ -1482,6 +1548,7 @@ async function readWithAI(bmp, rect) {
     found: {
       tax: body.tax == null ? null : num(body.tax),
       tip: body.tip == null ? null : num(body.tip),
+      discount: body.discount == null ? null : Math.abs(num(body.discount)),
       subtotal: body.subtotal == null ? null : num(body.subtotal),
       total: body.total == null ? null : num(body.total),
     },
@@ -1721,7 +1788,8 @@ function showReview(result, previewCanvas, bmp, rect) {
 
   var f = result.found;
   var applyTax = { on: f.tax != null }, applyTip = { on: f.tip != null };
-  if (f.tax != null || f.tip != null) {
+  var applyDiscount = { on: f.discount != null };
+  if (f.tax != null || f.tip != null || f.discount != null) {
     var det = el("div", "detected");
     det.appendChild(el("div", "eyebrow", "Also spotted"));
     var chargeRow = function (label, value, flag) {
@@ -1735,6 +1803,7 @@ function showReview(result, previewCanvas, bmp, rect) {
       r.appendChild(el("span", "amt", money(value)));
       det.appendChild(r);
     };
+    if (f.discount != null) chargeRow("Take this off as a discount", f.discount, applyDiscount);
     if (f.tax != null) chargeRow("Use this as tax", f.tax, applyTax);
     if (f.tip != null) chargeRow("Use this as tip", f.tip, applyTip);
     sheetBody.appendChild(det);
@@ -1761,7 +1830,9 @@ function showReview(result, previewCanvas, bmp, rect) {
   var add = el("button", "btn btn-solid", "");
   add.type = "button";
   add.addEventListener("click", function () {
-    var picked = result.items.filter(function (r) { return r.use && num(r.price) > 0; });
+    // Not `> 0`: a reader that returns an item-level markdown as a negative
+    // line was having it silently dropped, which quietly overcharged the table.
+    var picked = result.items.filter(function (r) { return r.use && num(r.price) !== 0; });
     picked.forEach(function (r) {
       state.items.push({
         id: uid(),
@@ -1772,6 +1843,7 @@ function showReview(result, previewCanvas, bmp, rect) {
     });
     if (f.tax != null && applyTax.on) state.tax = { mode: "amt", value: f.tax };
     if (f.tip != null && applyTip.on) state.tip = { mode: "amt", value: f.tip };
+    if (f.discount != null && applyDiscount.on) state.discount = { mode: "amt", value: f.discount };
 
     // The pinned photo earns its space when you're reading it to type items.
     // After an AI read there's nothing left to transcribe, so collapse it and
@@ -1791,7 +1863,7 @@ function showReview(result, previewCanvas, bmp, rect) {
   });
 
   function countUp() {
-    var live = result.items.filter(function (r) { return r.use && num(r.price) > 0; });
+    var live = result.items.filter(function (r) { return r.use && num(r.price) !== 0; });
     var n = live.length;
     add.textContent = n ? "Add " + n + (n === 1 ? " item" : " items") : "Nothing selected";
     add.disabled = !n;

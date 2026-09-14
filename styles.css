@@ -472,6 +472,7 @@
     font-size: 11px;
     color: var(--muted);
   }
+  .charge-hint.warn { color: var(--danger); }
 
   /* ---------- receipt ---------- */
 
@@ -536,6 +537,12 @@
     font-weight: 600;
   }
   .tally-row.total .amt { color: var(--accent); }
+
+  /* Money coming off reads in the accent, the one colour on the receipt that
+     means "in your favour" — the same green the grand total is set in. */
+  .tally-row.credit .amt,
+  .lines .credit span:last-child,
+  .share-lines div.credit span:last-child { color: var(--accent); }
 
   /* Only the per-person list scrolls; the tally and the share button stay put.
      min-height:0 lets this flex child shrink below its content height. */

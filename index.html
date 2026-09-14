@@ -70,7 +70,7 @@
 
       <section class="panel">
         <div class="panel-head">
-          <span class="eyebrow">Tax &amp; tip</span>
+          <span class="eyebrow">Tax, tip &amp; discount</span>
         </div>
         <div class="charge-grid">
           <div class="charge">
@@ -95,6 +95,17 @@
             </div>
             <p class="charge-hint" id="tipHint"></p>
             <div class="presets" id="tipPresets"></div>
+          </div>
+          <div class="charge">
+            <label for="discountInput">Discount</label>
+            <div class="charge-input">
+              <input id="discountInput" type="text" inputmode="decimal" data-charge="discount" />
+              <div class="seg">
+                <button type="button" data-mode="discount:amt" aria-pressed="false">$</button>
+                <button type="button" data-mode="discount:pct" aria-pressed="false">%</button>
+              </div>
+            </div>
+            <p class="charge-hint" id="discountHint"></p>
           </div>
         </div>
       </section>

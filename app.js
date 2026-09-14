@@ -30,6 +30,7 @@
       items: [],
       tax: { mode: "amt", value: 0 },
       tip: { mode: "amt", value: 0 },
+      discount: { mode: "amt", value: 0 },
       open: {}
     };
   }
@@ -38,6 +39,7 @@
       const saved = JSON.parse(localStorage.getItem(KEY));
       const state2 = saved && Array.isArray(saved.people) ? saved : seed();
       if (!state2.open) state2.open = {};
+      if (!state2.discount) state2.discount = { mode: "amt", value: 0 };
       return state2;
     } catch (e) {
       return seed();
@@ -93,16 +95,21 @@
     });
     const itemsTotal = state2.items.reduce((s, it) => s + num(it.price), 0);
     const assigned = ids.reduce((s, id) => s + subtotals[id], 0);
-    const tax = state2.tax.mode === "pct" ? assigned * num(state2.tax.value) / 100 : num(state2.tax.value);
-    const tip = state2.tip.mode === "pct" ? assigned * num(state2.tip.value) / 100 : num(state2.tip.value);
+    const asked = state2.discount ? state2.discount.mode === "pct" ? assigned * num(state2.discount.value) / 100 : num(state2.discount.value) : 0;
+    const discount = Math.max(0, Math.min(asked, assigned));
+    const discountCapped = asked > assigned + 1e-9;
+    const base = assigned - discount;
+    const tax = state2.tax.mode === "pct" ? base * num(state2.tax.value) / 100 : num(state2.tax.value);
+    const tip = state2.tip.mode === "pct" ? base * num(state2.tip.value) / 100 : num(state2.tip.value);
     const extra = tax + tip;
+    const adjust = extra - discount;
     const totals = {};
     const shares = {};
     ids.forEach((id) => {
       shares[id] = assigned > 0 ? subtotals[id] / assigned : 0;
-      totals[id] = subtotals[id] + shares[id] * extra;
+      totals[id] = subtotals[id] + shares[id] * adjust;
     });
-    const grand = Math.round((assigned + extra) * 100);
+    const grand = Math.round((assigned + adjust) * 100);
     const cents = ids.map((id) => {
       const raw = totals[id] * 100;
       return { id, floor: Math.floor(raw), frac: raw - Math.floor(raw) };
@@ -116,19 +123,29 @@
     cents.forEach((c) => {
       rounded[c.id] = (c.floor + (c.extraCent || 0)) / 100;
     });
+    const parts = {};
+    ids.forEach((id) => {
+      const off = shares[id] * discount;
+      parts[id] = { discount: off, extra: rounded[id] - subtotals[id] + off };
+    });
     const orphans = ids.length ? state2.items.filter((it) => !it.shared.filter((id) => ids.indexOf(id) !== -1).length) : [];
     return {
       ids,
       subtotals,
       lines,
       shares,
+      parts,
       totals: rounded,
       assigned,
       itemsTotal,
+      discount,
+      discountCapped,
+      base,
       tax,
       tip,
       extra,
-      grand: assigned + extra,
+      adjust,
+      grand: assigned + adjust,
       orphans
     };
   }
@@ -341,7 +358,7 @@
     }
   }
   function renderCharges() {
-    ["tax", "tip"].forEach(function(k) {
+    ["tax", "tip", "discount"].forEach(function(k) {
       var input = document.querySelector('[data-charge="' + k + '"]');
       if (document.activeElement !== input) {
         input.value = state[k].value === 0 ? "" : String(state[k].value);
@@ -351,6 +368,12 @@
         b.setAttribute("aria-pressed", b.dataset.mode === k + ":" + state[k].mode ? "true" : "false");
       });
     });
+  }
+  function pctLabel(k) {
+    return state[k].mode === "pct" ? " (" + num(state[k].value) + "%)" : "";
+  }
+  function allocLabel(r, id, amount) {
+    return "(" + r.subtotals[id].toFixed(2) + "/" + r.assigned.toFixed(2) + ") * " + amount.toFixed(2);
   }
   function renderReceipt() {
     var r = compute2();
@@ -367,10 +390,18 @@
       tally.appendChild(row);
     };
     line("Subtotal", r.assigned);
-    line("Tax" + (state.tax.mode === "pct" ? " (" + num(state.tax.value) + "%)" : ""), r.tax);
-    line("Tip" + (state.tip.mode === "pct" ? " (" + num(state.tip.value) + "%)" : ""), r.tip);
+    if (r.discount > 0) line("Discount" + pctLabel("discount"), -r.discount, "credit");
+    line("Tax" + pctLabel("tax"), r.tax);
+    line("Tip" + pctLabel("tip"), r.tip);
     line("Total", r.grand, "total");
     receipt.appendChild(tally);
+    if (r.discountCapped) {
+      receipt.appendChild(el(
+        "div",
+        "flag",
+        "That discount is bigger than the items, so it's capped at " + money(r.discount) + " \u2014 the bill can't go below zero."
+      ));
+    }
     if (r.orphans.length) {
       receipt.appendChild(el(
         "div",
@@ -395,7 +426,7 @@
       left.appendChild(el(
         "div",
         "split-meta",
-        r.lines[id].length + (r.lines[id].length === 1 ? " item" : " items") + " \xB7 " + Math.round(r.shares[id] * 100) + "% of tax+tip"
+        r.lines[id].length + (r.lines[id].length === 1 ? " item" : " items") + " \xB7 " + Math.round(r.shares[id] * 100) + "% of " + (r.discount > 0 ? "the extras" : "tax+tip")
       ));
       h.appendChild(left);
       h.appendChild(el("div", "split-amt", money(r.totals[id])));
@@ -425,9 +456,16 @@
         sub.appendChild(el("span", null, "subtotal"));
         sub.appendChild(el("span", null, money(r.subtotals[id])));
         ul.appendChild(sub);
+        if (r.discount > 0) {
+          var disc = document.createElement("li");
+          disc.className = "credit";
+          disc.appendChild(el("span", null, "discount: " + allocLabel(r, id, r.discount)));
+          disc.appendChild(el("span", null, money(-r.parts[id].discount)));
+          ul.appendChild(disc);
+        }
         var ex = document.createElement("li");
-        ex.appendChild(el("span", null, "tax+tip: (" + r.subtotals[id].toFixed(2) + "/" + r.assigned.toFixed(2) + ") * " + r.extra.toFixed(2)));
-        ex.appendChild(el("span", null, money(r.totals[id] - r.subtotals[id])));
+        ex.appendChild(el("span", null, "tax+tip: " + allocLabel(r, id, r.extra)));
+        ex.appendChild(el("span", null, money(r.parts[id].extra)));
         ul.appendChild(ex);
         var tot = document.createElement("li");
         tot.className = "grand";
@@ -887,9 +925,9 @@
   var tipPresets = document.getElementById("tipPresets");
   function renderTipPresets(r) {
     tipPresets.textContent = "";
-    if (!r || !(r.assigned > 0)) return;
+    if (!r || !(r.base > 0)) return;
     TIP_PRESETS.forEach(function(pct) {
-      var amount = r.assigned * pct / 100;
+      var amount = r.base * pct / 100;
       var b = el("button", null, pct + "%");
       b.type = "button";
       b.appendChild(el("span", null, money(amount)));
@@ -909,8 +947,15 @@
   }
   function renderHints() {
     var r = compute2();
-    document.getElementById("taxHint").textContent = state.tax.mode === "pct" ? "= " + money(r.tax) : r.assigned > 0 ? (r.tax / r.assigned * 100).toFixed(2) + "% of subtotal" : "";
-    document.getElementById("tipHint").textContent = state.tip.mode === "pct" ? "= " + money(r.tip) : r.assigned > 0 ? (r.tip / r.assigned * 100).toFixed(2) + "% of subtotal" : "";
+    var of = r.discount > 0 ? "% of the discounted " + r.base.toFixed(2) : "% of subtotal";
+    var charge = function(k, amount) {
+      document.getElementById(k + "Hint").textContent = state[k].mode === "pct" ? "= " + money(amount) : r.base > 0 ? (amount / r.base * 100).toFixed(2) + of : "";
+    };
+    charge("tax", r.tax);
+    charge("tip", r.tip);
+    var d = document.getElementById("discountHint");
+    d.classList.toggle("warn", !!r.discountCapped);
+    d.textContent = r.discountCapped ? "capped at " + money(r.discount) + " \u2014 the items only come to that much" : r.discount <= 0 ? "off the whole check, before tax and tip" : state.discount.mode === "pct" ? "= " + money(r.discount) + " off" : r.assigned > 0 ? (r.discount / r.assigned * 100).toFixed(2) + "% off the subtotal" : "";
   }
   var toast = document.getElementById("toast");
   var toastTimer;
@@ -1005,7 +1050,7 @@
     );
     y += 24;
     put(
-      "Subtotal " + money(r.assigned) + "   \xB7   Tax " + money(r.tax) + "   \xB7   Tip " + money(r.tip),
+      "Subtotal " + money(r.assigned) + (r.discount > 0 ? "   \xB7   Discount \u2212" + money(r.discount) : "") + "   \xB7   Tax " + money(r.tax) + "   \xB7   Tip " + money(r.tip),
       pad,
       "13px " + MONO,
       IMG.muted
@@ -1034,14 +1079,24 @@
       y += 20;
       put("subtotal", pad + 16, "13px " + MONO, IMG.soft);
       put(r.subtotals[id].toFixed(2), right, "13px " + MONO, IMG.soft, "right");
+      if (r.discount > 0) {
+        y += 21;
+        put(
+          ellipsize(ctx, "discount: " + allocLabel(r, id, r.discount), labelMax),
+          pad + 16,
+          "13px " + MONO,
+          IMG.muted
+        );
+        put("-" + r.parts[id].discount.toFixed(2), right, "13px " + MONO, IMG.muted, "right");
+      }
       y += 21;
       put(
-        ellipsize(ctx, "tax+tip: (" + r.subtotals[id].toFixed(2) + "/" + r.assigned.toFixed(2) + ") * " + r.extra.toFixed(2), labelMax),
+        ellipsize(ctx, "tax+tip: " + allocLabel(r, id, r.extra), labelMax),
         pad + 16,
         "13px " + MONO,
         IMG.muted
       );
-      put((r.totals[id] - r.subtotals[id]).toFixed(2), right, "13px " + MONO, IMG.muted, "right");
+      put(r.parts[id].extra.toFixed(2), right, "13px " + MONO, IMG.muted, "right");
       y += 23;
       put("total", pad + 16, "600 14px " + MONO, IMG.ink);
       put(r.totals[id].toFixed(2), right, "600 14px " + MONO, IMG.ink, "right");
@@ -1154,7 +1209,7 @@
     var head = el("div", "share-head");
     var left = el("div");
     left.appendChild(el("span", "eyebrow", "Total"));
-    left.appendChild(el("div", null, money(r.assigned) + " + " + money(r.extra) + " tax & tip"));
+    left.appendChild(el("div", null, money(r.assigned) + (r.discount > 0 ? " \u2212 " + money(r.discount) + " off" : "") + " + " + money(r.extra) + " tax & tip"));
     head.appendChild(left);
     head.appendChild(el("div", "amt", money(r.grand)));
     sheetBody.appendChild(head);
@@ -1173,7 +1228,14 @@
         row(l.label, l.amount.toFixed(2));
       });
       row("subtotal", r.subtotals[id].toFixed(2), "sub");
-      row("tax+tip: (" + r.subtotals[id].toFixed(2) + "/" + r.assigned.toFixed(2) + ") * " + r.extra.toFixed(2), (r.totals[id] - r.subtotals[id]).toFixed(2));
+      if (r.discount > 0) {
+        row(
+          "discount: " + allocLabel(r, id, r.discount),
+          "-" + r.parts[id].discount.toFixed(2),
+          "credit"
+        );
+      }
+      row("tax+tip: " + allocLabel(r, id, r.extra), r.parts[id].extra.toFixed(2));
       row("total", r.totals[id].toFixed(2), "grand");
       block.appendChild(body);
       sheetBody.appendChild(block);
@@ -1315,14 +1377,15 @@
     ctx.putImageData(img, 0, 0);
     return c;
   }
-  var NOISE = /(sub\s*-?\s*total|total|balance|amount\s+due|tax|tip|gratuity|change|cash|debit|credit|visa|master|amex|discover|card\b|acct|account|auth|approv|\bref\b|tender|payment|savings|coupon|loyalty|member|reward|points|thank|welcome|receipt|invoice|survey|cashier|register|server|table|guest|\bqty\b|items? sold|item count|www\.|\.com|http|store\s*#|tel\b|phone)/i;
+  var NOISE = /(sub\s*-?\s*total|total|balance|amount\s+due|tax|tip|gratuity|change|cash|debit|credit|visa|master|amex|discover|card\b|acct|account|auth|approv|\bref\b|tender|payment|savings|coupon|discount|promo|loyalty|member|reward|points|thank|welcome|receipt|invoice|survey|cashier|register|server|table|guest|\bqty\b|items? sold|item count|www\.|\.com|http|store\s*#|tel\b|phone)/i;
+  var DISCOUNT = /discount|coupon|promo|savings|\bcomp(ed|limentary)?\b|\d\s*%\s*off|\boff\b/i;
   var PRICE_AT_END = /(-?\$?\s*\d{1,4}[.,]\d{2})\s*[A-Za-z]{0,2}$/;
   function toNumber(raw) {
     return num(String(raw).replace(/[^0-9.,\-]/g, "").replace(",", "."));
   }
   function parseReceipt(text) {
     var lines = text.split(/\r?\n/);
-    var items = [], found = { tax: null, tip: null, total: null, subtotal: null };
+    var items = [], found = { tax: null, tip: null, total: null, subtotal: null, discount: null };
     lines.forEach(function(rawLine) {
       var line = rawLine.replace(/\s+/g, " ").trim();
       if (line.length < 4) return;
@@ -1331,7 +1394,8 @@
       var price = toNumber(m[1]);
       var label = line.slice(0, m.index).trim();
       if (NOISE.test(line)) {
-        if (/\btips?\b|gratuity/i.test(line) && found.tip === null) found.tip = price;
+        if (DISCOUNT.test(line) && found.discount === null) found.discount = Math.abs(price);
+        else if (/\btips?\b|gratuity/i.test(line) && found.tip === null) found.tip = price;
         else if (/\btax\b/i.test(line) && !/taxable/i.test(line) && found.tax === null) found.tax = price;
         else if (/sub\s*-?\s*total/i.test(line) && found.subtotal === null) found.subtotal = price;
         else if (/total/i.test(line)) found.total = price;
@@ -1554,6 +1618,7 @@
       found: {
         tax: body.tax == null ? null : num(body.tax),
         tip: body.tip == null ? null : num(body.tip),
+        discount: body.discount == null ? null : Math.abs(num(body.discount)),
         subtotal: body.subtotal == null ? null : num(body.subtotal),
         total: body.total == null ? null : num(body.total)
       },
@@ -1788,7 +1853,8 @@
     sheetBody.appendChild(recon);
     var f = result.found;
     var applyTax = { on: f.tax != null }, applyTip = { on: f.tip != null };
-    if (f.tax != null || f.tip != null) {
+    var applyDiscount = { on: f.discount != null };
+    if (f.tax != null || f.tip != null || f.discount != null) {
       var det = el("div", "detected");
       det.appendChild(el("div", "eyebrow", "Also spotted"));
       var chargeRow = function(label, value, flag) {
@@ -1804,6 +1870,7 @@
         r.appendChild(el("span", "amt", money(value)));
         det.appendChild(r);
       };
+      if (f.discount != null) chargeRow("Take this off as a discount", f.discount, applyDiscount);
       if (f.tax != null) chargeRow("Use this as tax", f.tax, applyTax);
       if (f.tip != null) chargeRow("Use this as tip", f.tip, applyTip);
       sheetBody.appendChild(det);
@@ -1829,7 +1896,7 @@
     add.type = "button";
     add.addEventListener("click", function() {
       var picked = result.items.filter(function(r) {
-        return r.use && num(r.price) > 0;
+        return r.use && num(r.price) !== 0;
       });
       picked.forEach(function(r) {
         state.items.push({
@@ -1843,6 +1910,7 @@
       });
       if (f.tax != null && applyTax.on) state.tax = { mode: "amt", value: f.tax };
       if (f.tip != null && applyTip.on) state.tip = { mode: "amt", value: f.tip };
+      if (f.discount != null && applyDiscount.on) state.discount = { mode: "amt", value: f.discount };
       var tucked = false;
       if (result.readBy && photo && state.photoOpen !== false) {
         state.photoOpen = false;
@@ -1856,7 +1924,7 @@
     });
     function countUp() {
       var live = result.items.filter(function(r) {
-        return r.use && num(r.price) > 0;
+        return r.use && num(r.price) !== 0;
       });
       var n = live.length;
       add.textContent = n ? "Add " + n + (n === 1 ? " item" : " items") : "Nothing selected";

@@ -9,19 +9,32 @@ export const SCHEMA = {
       items: {
         type: "object",
         properties: {
-          name: { type: "string", description: "The item name as printed, cleaned of barcodes and item codes." },
-          price: { type: "number", description: "The extended line total in dollars, not the unit price." },
+          name: {
+            type: "string",
+            description:
+              "The item name as printed, cleaned of barcodes and item codes.",
+          },
+          price: {
+            type: "number",
+            description:
+              "The extended line total in dollars, not the unit price.",
+          },
         },
         required: ["name", "price"],
         additionalProperties: false,
       },
     },
     subtotal: { anyOf: [{ type: "number" }, { type: "null" }] },
+    discount: {
+      description:
+        "A check-wide discount, coupon, or promotion, as a positive number of dollars taken off.",
+      anyOf: [{ type: "number" }, { type: "null" }],
+    },
     tax: { anyOf: [{ type: "number" }, { type: "null" }] },
     tip: { anyOf: [{ type: "number" }, { type: "null" }] },
     total: { anyOf: [{ type: "number" }, { type: "null" }] },
   },
-  required: ["items", "subtotal", "tax", "tip", "total"],
+  required: ["items", "subtotal", "discount", "tax", "tip", "total"],
   additionalProperties: false,
 };
 
@@ -32,9 +45,10 @@ Rules:
 - "price" is the extended line total (what that line contributed to the bill), never the unit price. A line reading "2 @ 4.12" that totals 8.24 has a price of 8.24.
 - Keep the item name close to what is printed, minus leading barcodes, PLU codes, and department numbers. Expand obvious abbreviations only when you are confident.
 - Write names in Title Case, not the receipt's usual all-caps: "BOUNTY PAPER TOWELS" becomes "Bounty Paper Towels". Preserve casing that is genuinely part of the name — acronyms and short codes stay upper ("TP", "GY"), brands keep their own form ("iPhone", "McDonald's"), and unit suffixes stay as printed ("92OZ").
-- A discount or coupon line is an item with a negative price.
+- A discount that applies to the whole check — a coupon, a promotion, "20% OFF", a comped amount — goes in "discount" as a positive number of dollars taken off, not as an item. If several such lines are printed, report their sum.
+- A discount attached to one specific line item stays with that item: either as the item's own negative-priced line, exactly as printed, or folded into that item's price if the receipt already shows it net.
 - Do NOT include subtotal, tax, tip, total, change, payment method, card digits, auth codes, loyalty numbers, or store contact details as items. Those belong in the dedicated fields, or nowhere.
-- Report subtotal, tax, tip, and total only if they are printed and legible. Use null for any that are absent — never infer or compute them.
+- Report subtotal, discount, tax, tip, and total only if they are printed and legible. Use null for any that are absent — never infer or compute them.
 - If a price is genuinely unreadable, omit that item rather than guessing. A missing line is recoverable; an invented number is not.`;
 
 /**
@@ -71,9 +85,15 @@ export async function readReceipt({ engine, keys, mediaType, data }) {
     engine,
     model,
     items: items
-      .filter((i) => i && typeof i.name === "string" && Number.isFinite(i.price))
+      .filter(
+        (i) => i && typeof i.name === "string" && Number.isFinite(i.price),
+      )
       .map((i) => ({ name: titleCase(i.name).slice(0, 60), price: i.price })),
     subtotal: numberOrNull(parsed.subtotal),
+    // Receipts print discounts as negatives and models copy that faithfully;
+    // the field's meaning is "amount taken off", so the sign is stripped here
+    // rather than left for the client to guess at.
+    discount: Number.isFinite(parsed.discount) ? Math.abs(parsed.discount) : null,
     tax: numberOrNull(parsed.tax),
     tip: numberOrNull(parsed.tip),
     total: numberOrNull(parsed.total),

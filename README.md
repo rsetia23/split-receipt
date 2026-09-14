@@ -1,7 +1,8 @@
 # Split
 
-A receipt splitter. Assign each item to whoever actually shared it; tax and tip
-are then divided in proportion to what each person ordered, rather than evenly.
+A receipt splitter. Assign each item to whoever actually shared it; tax, tip,
+and any discount are then divided in proportion to what each person ordered,
+rather than evenly.
 
 One self-contained `index.html` — no build step, no dependencies, no server.
 Open the file directly or serve the folder statically.
@@ -9,12 +10,18 @@ Open the file directly or serve the folder statically.
 ## How the math works
 
 Each item is split evenly among the people assigned to it. Everyone's subtotal
-is the sum of their shares. Tax and tip are allocated by each person's fraction
-of the overall subtotal:
+is the sum of their shares. A whole-check discount, then tax and tip, are
+allocated by each person's fraction of the overall subtotal:
 
 ```
-total[p] = subtotal[p] + (subtotal[p] / overall_subtotal) * (tax + tip)
+total[p] = subtotal[p] + (subtotal[p] / overall_subtotal) * (tax + tip - discount)
 ```
+
+A discount can be entered as dollars or as a percentage of the subtotal, and is
+capped at the subtotal — a coupon larger than the food is a typo, not a refund.
+Percentage tax and tip are computed on the discounted subtotal, which is the
+base the register charges tax on. To tip on the full pre-discount amount, switch
+the tip field to `$`.
 
 Per-person totals are rounded by largest remainder, so the individual shares
 always sum to the exact bill total instead of drifting a cent.
@@ -35,7 +42,9 @@ printed subtotal is legible, the review sheet cross-checks the parsed items
 against it and warns when they disagree, which catches most misread prices.
 
 The parser skips payment/auth/card noise, strips leading barcodes and trailing
-`2 @ 1.99` quantity tails, and pulls tax and tip out of the lines it ignores.
+`2 @ 1.99` quantity tails, and pulls tax, tip, and any coupon or discount line
+out of the lines it ignores. Those are offered as checkboxes in the review
+sheet, never applied silently.
 
 ## State
 
