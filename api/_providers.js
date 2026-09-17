@@ -111,8 +111,16 @@ const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "")
   .map((s) => s.trim())
   .filter(Boolean);
 // No new attempt starts after this long, so the chain fits inside the routes'
-// 60s maxDuration with room for the final call to finish.
-const RETRY_WINDOW_MS = 20_000;
+// 60s maxDuration with room for the final call to finish. The budget covers
+// every chain in one request, including the second pass over the key's own
+// model list — measured from the request, not from each chain, or two passes
+// double it and Vercel kills the function instead.
+const RETRY_WINDOW_MS = 40_000;
+// The SDK sets no request timeout and does not retry unless asked, so a call
+// that never comes back blocks until the platform kills the whole function.
+// That happened in production: 60s, no answer, nothing logged. Each attempt is
+// now bounded, and a timeout is just another busy model to step past.
+const ATTEMPT_TIMEOUT_MS = 15_000;
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -125,13 +133,12 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function tryModels(
   models,
   callOnce,
-  { pause = wait, windowMs = RETRY_WINDOW_MS, now = Date.now, skip404 = false } = {},
+  { pause = wait, now = Date.now, skip404 = false, deadline = now() + RETRY_WINDOW_MS } = {},
 ) {
-  const started = now();
   let lastErr;
   for (const [index, model] of models.entries()) {
     for (let attempt = 0; attempt < 2; attempt++) {
-      if (lastErr && now() - started > windowMs) throw lastErr;
+      if (lastErr && now() > deadline) throw lastErr;
       try {
         return await callOnce(model);
       } catch (err) {
@@ -151,13 +158,26 @@ export async function tryModels(
 }
 
 async function callGemini({ apiKey, model, system, schema, parts }) {
-  const ai = new GoogleGenAI({ apiKey });
-  const callOnce = (m) => callGeminiOnce({ ai, model: m, system, schema, parts });
+  const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: ATTEMPT_TIMEOUT_MS } });
+  const callOnce = async (m) => {
+    try {
+      return await callGeminiOnce({ ai, model: m, system, schema, parts });
+    } catch (err) {
+      // An aborted fetch carries no HTTP status, so it would otherwise read as
+      // a permanent failure and stop the chain.
+      const aborted = err?.name === "AbortError" || /abort|timed? ?out/i.test(String(err?.message || ""));
+      if (aborted && !Number(err?.status)) {
+        throw new ProviderError(504, m + " did not answer within " + ATTEMPT_TIMEOUT_MS / 1000 + "s.");
+      }
+      throw err;
+    }
+  };
   const first = resolvedGeminiModel || model;
   const tried = [first, ...FALLBACK_MODELS.filter((m) => m !== first)];
+  const deadline = Date.now() + RETRY_WINDOW_MS;
 
   try {
-    return await tryModels(tried, callOnce);
+    return await tryModels(tried, callOnce, { deadline });
   } catch (err) {
     const status = Number(err?.status);
     // Two different failures, one answer. A 404 means the configured id is
@@ -166,6 +186,7 @@ async function callGemini({ apiKey, model, system, schema, parts }) {
     // a hardcoded fallback can name a model the key doesn't have, and this
     // can't. Anything else (a bad request, a rejected key) is the caller's.
     if (status !== 404 && !TRANSIENT.has(status)) throw err;
+    if (Date.now() > deadline) throw err;
 
     let available = [];
     try {
@@ -188,7 +209,7 @@ async function callGemini({ apiKey, model, system, schema, parts }) {
       );
     }
 
-    const result = await tryModels(chain, callOnce, { skip404: true });
+    const result = await tryModels(chain, callOnce, { skip404: true, deadline });
     // Only a retired model is worth remembering. An overloaded one will be
     // back shortly, and pinning this instance to a fallback would outlast the
     // spike that caused it.
