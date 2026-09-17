@@ -2,7 +2,9 @@ import { authorize, makeDailyLimiter, upstreamDetail } from "./_shared.js";
 import { ENGINES, ProviderError } from "./_providers.js";
 import { assignSplit } from "./_assist.js";
 
-export const config = { maxDuration: 30 };
+// Same ceiling as scan: when models are busy the request walks a fallback
+// chain, and 30s could kill it mid-retry.
+export const config = { maxDuration: 60 };
 
 const MAX_PEOPLE = 24;
 const MAX_ITEMS = 200;

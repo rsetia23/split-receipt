@@ -110,8 +110,8 @@ const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-// No new attempt starts after this long, so the chain fits inside the route's
-// maxDuration (30s for assign, 60s for scan) with room for the final call.
+// No new attempt starts after this long, so the chain fits inside the routes'
+// 60s maxDuration with room for the final call to finish.
 const RETRY_WINDOW_MS = 20_000;
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
