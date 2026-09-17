@@ -1505,7 +1505,8 @@ function askPassphrase(onDone, message, onCancel) {
 async function readWithAI(bmp, rect) {
   attachPhoto(bmp, rect);
   var setProgress = showWork(
-    "The cropped photo goes to this site's reader, and on to Gemini. Usually about five seconds.");
+    "The cropped photo goes to this site's reader, and on to Gemini. Usually about five seconds, "
+    + "up to a minute when the models are busy.");
   setProgress("Preparing the photo…", "busy");
 
   var payload;
@@ -1520,7 +1521,11 @@ async function readWithAI(bmp, rect) {
   // is how long it has been going. The timer stops on every exit path.
   var started = Date.now();
   var elapsed = function () {
-    setProgress("Reading the receipt…", "busy", Math.round((Date.now() - started) / 1000) + "s");
+    var secs = Math.round((Date.now() - started) / 1000);
+    // Past about ten seconds the server is no longer on its first attempt: a
+    // model was busy and it is working down the chain. Saying so beats a
+    // counter that ticks on with no explanation.
+    setProgress(secs < 10 ? "Reading the receipt…" : "A model is busy — trying another…", "busy", secs + "s");
   };
   elapsed();
   var tick = setInterval(elapsed, 1000);

@@ -1565,7 +1565,7 @@
   async function readWithAI(bmp, rect) {
     attachPhoto(bmp, rect);
     var setProgress = showWork(
-      "The cropped photo goes to this site's reader, and on to Gemini. Usually about five seconds."
+      "The cropped photo goes to this site's reader, and on to Gemini. Usually about five seconds, up to a minute when the models are busy."
     );
     setProgress("Preparing the photo\u2026", "busy");
     var payload;
@@ -1577,7 +1577,8 @@
     }
     var started = Date.now();
     var elapsed = function() {
-      setProgress("Reading the receipt\u2026", "busy", Math.round((Date.now() - started) / 1e3) + "s");
+      var secs = Math.round((Date.now() - started) / 1e3);
+      setProgress(secs < 10 ? "Reading the receipt\u2026" : "A model is busy \u2014 trying another\u2026", "busy", secs + "s");
     };
     elapsed();
     var tick = setInterval(elapsed, 1e3);
