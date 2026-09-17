@@ -1635,7 +1635,7 @@
         total: body.total == null ? null : num(body.total)
       },
       readBy: body.model || "the reader",
-      raw: JSON.stringify(body, null, 2)
+      secs: (Date.now() - started) / 1e3
     };
     showReview(result, null, bmp, rect);
   }
@@ -1821,7 +1821,7 @@
       setFoot([retry, byHand]);
       return;
     }
-    sheetBody.appendChild(el("p", "scan-hint", result.readBy ? "Read by " + result.readBy + ". Check the lines below \u2014 untick anything that isn't an item, and fix any price it got wrong." : "Check the lines below \u2014 untick anything that isn't an item, and fix any prices OCR got wrong."));
+    sheetBody.appendChild(el("p", "scan-hint", result.readBy ? "Read by " + result.readBy + (result.secs ? " in " + result.secs.toFixed(1) + "s" : "") + ". Check the lines below \u2014 untick anything that isn't an item, and fix any price it got wrong." : "Check the lines below \u2014 untick anything that isn't an item, and fix any prices OCR got wrong."));
     var list = el("ul", "found");
     list.style.marginTop = "12px";
     result.items.forEach(function(row) {
@@ -1889,10 +1889,11 @@
     }
     addRawBlock();
     function addRawBlock() {
+      if (!previewCanvas) return;
       var det2 = document.createElement("details");
       det2.className = "raw";
       var sum = document.createElement("summary");
-      sum.textContent = previewCanvas ? "Show the raw text OCR read" : "Show what the reader returned";
+      sum.textContent = "Show the raw text OCR read";
       det2.appendChild(sum);
       var pre = document.createElement("pre");
       pre.textContent = result.raw.trim() || "(nothing)";

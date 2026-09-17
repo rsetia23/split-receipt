@@ -1574,7 +1574,7 @@ async function readWithAI(bmp, rect) {
       total: body.total == null ? null : num(body.total),
     },
     readBy: body.model || "the reader",
-    raw: JSON.stringify(body, null, 2),
+    secs: (Date.now() - started) / 1000,
   };
 
   showReview(result, null, bmp, rect);
@@ -1764,7 +1764,8 @@ function showReview(result, previewCanvas, bmp, rect) {
   }
 
   sheetBody.appendChild(el("p", "scan-hint", result.readBy
-    ? "Read by " + result.readBy + ". Check the lines below — untick anything that isn't an item, and fix any price it got wrong."
+    ? "Read by " + result.readBy + (result.secs ? " in " + result.secs.toFixed(1) + "s" : "") +
+      ". Check the lines below — untick anything that isn't an item, and fix any price it got wrong."
     : "Check the lines below — untick anything that isn't an item, and fix any prices OCR got wrong."));
 
   var list = el("ul", "found");
@@ -1832,11 +1833,16 @@ function showReview(result, previewCanvas, bmp, rect) {
 
   addRawBlock();
 
+  // Only the offline path: the recognised text is the one place a misread
+  // price can be explained, and it pairs with the thresholded image above it.
+  // The AI reader's JSON just restated the rows the sheet already shows, with
+  // token counts after them.
   function addRawBlock() {
+    if (!previewCanvas) return;
     var det = document.createElement("details");
     det.className = "raw";
     var sum = document.createElement("summary");
-    sum.textContent = previewCanvas ? "Show the raw text OCR read" : "Show what the reader returned";
+    sum.textContent = "Show the raw text OCR read";
     det.appendChild(sum);
     var pre = document.createElement("pre");
     pre.textContent = result.raw.trim() || "(nothing)";
