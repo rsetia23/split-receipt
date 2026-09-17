@@ -1461,7 +1461,7 @@
     sheetBody.appendChild(tips);
     setFoot([]);
   }
-  function showWork() {
+  function showWork(hint) {
     sheetBody.textContent = "";
     var wrap = el("div");
     var status = el("div", "scan-status");
@@ -1474,16 +1474,17 @@
     bar.appendChild(fill);
     wrap.appendChild(bar);
     wrap.appendChild(status);
-    wrap.appendChild(el(
-      "p",
-      "scan-hint",
-      "First scan downloads the recognizer (about 15 MB) \u2014 after that it's cached and starts instantly."
-    ));
+    wrap.appendChild(el("p", "scan-hint", hint || "First scan downloads the recognizer (about 15 MB) \u2014 after that it's cached and starts instantly."));
     sheetBody.appendChild(wrap);
     setFoot([]);
-    return function(text, ratio) {
+    return function(text, ratio, note) {
       label.textContent = text;
-      if (ratio == null) {
+      var busy = ratio === "busy";
+      bar.classList.toggle("busy", busy);
+      if (busy) {
+        pct.textContent = note || "";
+        fill.style.width = "";
+      } else if (ratio == null) {
         pct.textContent = "";
         fill.style.width = "0%";
       } else {
@@ -1563,8 +1564,10 @@
   }
   async function readWithAI(bmp, rect) {
     attachPhoto(bmp, rect);
-    var setProgress = showWork();
-    setProgress("Reading the receipt\u2026", null);
+    var setProgress = showWork(
+      "The cropped photo goes to this site's reader, and on to Gemini. Usually about five seconds."
+    );
+    setProgress("Preparing the photo\u2026", "busy");
     var payload;
     try {
       payload = scanImage(bmp, rect);
@@ -1572,6 +1575,12 @@
       showError("Couldn't prepare that image.", String(e && e.message || e));
       return;
     }
+    var started = Date.now();
+    var elapsed = function() {
+      setProgress("Reading the receipt\u2026", "busy", Math.round((Date.now() - started) / 1e3) + "s");
+    };
+    elapsed();
+    var tick = setInterval(elapsed, 1e3);
     var res, body;
     try {
       res = await fetch("/api/scan", {
@@ -1583,12 +1592,14 @@
         return {};
       });
     } catch (e) {
+      clearInterval(tick);
       showError(
         "Couldn't reach the reader.",
         "Check your connection, or use \u201CScan offline\u201D, which runs entirely on this device."
       );
       return;
     }
+    clearInterval(tick);
     if (res.status === 401) {
       var hadPass = !!scanPass;
       scanPass = null;

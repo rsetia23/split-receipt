@@ -844,6 +844,20 @@
     border-radius: 999px;
     transition: width .25s ease;
   }
+  /* Work of unknown length: a model call reports nothing until it answers, so
+     the bar paces itself rather than sitting at 0% looking hung. */
+  .progress.busy span {
+    width: 40%;
+    transition: none;
+    animation: progress-sweep 1.15s ease-in-out infinite;
+  }
+  @keyframes progress-sweep {
+    from { transform: translateX(-105%); }
+    to { transform: translateX(255%); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .progress.busy span { animation: none; width: 100%; opacity: .55; }
+  }
 
   .scan-status {
     font-family: var(--font-mono);

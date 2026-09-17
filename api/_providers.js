@@ -18,9 +18,9 @@ export class ProviderError extends Error {
 // --- Google ------------------------------------------------------------------
 
 // Google retires model ids on its own schedule, so a hardcoded default goes
-// stale — and pushing that chore onto the user just relocates it. On a 404 we
-// ask the key what it can call, pick a stable vision-capable Flash model, and
-// retry once. Cached per warm instance, and only after a success.
+// stale — and pushing that chore onto the user just relocates it. When the
+// configured id 404s we ask the key what it can call and work down that list,
+// remembering the replacement per warm instance, only after a success.
 let resolvedGeminiModel = null;
 
 async function listGeminiModels(apiKey) {
@@ -34,21 +34,29 @@ async function listGeminiModels(apiKey) {
     .map((m) => String(m.name || "").replace(/^models\//, ""));
 }
 
-export function pickGeminiModel(names) {
+export function rankGeminiModels(names) {
   const version = (n) => {
     const m = n.match(/(\d+(?:\.\d+)?)/);
     return m ? parseFloat(m[1]) : 0;
   };
-  const usable = names.filter(
-    (n) => /flash/i.test(n) && !/embedding|aqa|tts|image|audio|native|live|thinking|lite/i.test(n),
-  );
-  const ranked = (usable.length ? usable : names.filter((n) => /pro/i.test(n) && !/vision/i.test(n)))
+  // Vision-capable general models only, best first: full Flash, then Flash
+  // Lite, then Pro. Within a tier, a plain id beats a dated or preview one,
+  // and a newer version beats an older.
+  const tier = (n) =>
+    /flash/i.test(n) ? (/lite/i.test(n) ? 1 : 0) : /pro/i.test(n) && !/vision/i.test(n) ? 2 : 3;
+  const stable = (n) => (/preview|exp|\d{4}/i.test(n) ? 1 : 0);
+  return names
+    .filter((n) => !/embedding|aqa|tts|image|audio|native|live|thinking/i.test(n))
+    .filter((n) => tier(n) < 3)
     .slice()
-    .sort((a, b) => {
-      const stable = (n) => (/preview|exp|\d{4}/i.test(n) ? 1 : 0);
-      return stable(a) - stable(b) || version(b) - version(a) || a.length - b.length;
-    });
-  return ranked[0] || null;
+    .sort(
+      (a, b) =>
+        tier(a) - tier(b) || stable(a) - stable(b) || version(b) - version(a) || a.length - b.length,
+    );
+}
+
+export function pickGeminiModel(names) {
+  return rankGeminiModels(names)[0] || null;
 }
 
 function geminiParts(parts) {
@@ -94,10 +102,11 @@ async function callGeminiOnce({ ai, model, system, schema, parts }) {
 // model and usually passes within seconds, so a busy model gets one short
 // retry and then the request moves down this chain instead of failing. A 429
 // skips the retry: free-tier quotas are per model per minute, so waiting a
-// second won't help but another model might. Fallbacks missing from the key
-// are skipped, so a retired id here costs one quick 404, not an outage.
+// second won't help but another model might. GEMINI_FALLBACK_MODELS is an
+// optional hand-written chain; left empty, the key's own model list is used
+// instead, which is the only source that can't name a model the key lacks.
 const TRANSIENT = new Set([429, 500, 502, 503, 504]);
-const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "gemini-2.5-flash-lite,gemini-flash-latest")
+const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -109,10 +118,15 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
  * Calls `callOnce(model)` down `models` until one succeeds. A 404 on the first
- * model is thrown at once so the caller can look up a replacement; a 404 on a
- * fallback is skipped without replacing the earlier, more telling error.
+ * model is thrown at once so the caller can look up a replacement, unless
+ * `skip404` says the list itself came from the key; a 404 further down is
+ * skipped without replacing the earlier, more telling error.
  */
-export async function tryModels(models, callOnce, { pause = wait, windowMs = RETRY_WINDOW_MS, now = Date.now } = {}) {
+export async function tryModels(
+  models,
+  callOnce,
+  { pause = wait, windowMs = RETRY_WINDOW_MS, now = Date.now, skip404 = false } = {},
+) {
   const started = now();
   let lastErr;
   for (const [index, model] of models.entries()) {
@@ -122,7 +136,10 @@ export async function tryModels(models, callOnce, { pause = wait, windowMs = RET
         return await callOnce(model);
       } catch (err) {
         const status = Number(err?.status);
-        if (status === 404 && index > 0) break;
+        if (status === 404 && (skip404 || index > 0)) {
+          if (!lastErr) lastErr = err;
+          break;
+        }
         lastErr = err;
         if (!TRANSIENT.has(status)) throw err;
         if (status === 429 || attempt === 1) break;
@@ -135,23 +152,33 @@ export async function tryModels(models, callOnce, { pause = wait, windowMs = RET
 
 async function callGemini({ apiKey, model, system, schema, parts }) {
   const ai = new GoogleGenAI({ apiKey });
+  const callOnce = (m) => callGeminiOnce({ ai, model: m, system, schema, parts });
   const first = resolvedGeminiModel || model;
-  const chain = [first, ...FALLBACK_MODELS.filter((m) => m !== first)];
+  const tried = [first, ...FALLBACK_MODELS.filter((m) => m !== first)];
+
   try {
-    const result = await tryModels(chain, (m) => callGeminiOnce({ ai, model: m, system, schema, parts }));
-    if (result.model !== first) console.log("[gemini] %s busy; answered by %s", first, result.model);
-    return result;
+    return await tryModels(tried, callOnce);
   } catch (err) {
-    if (Number(err?.status) !== 404) throw err;
+    const status = Number(err?.status);
+    // Two different failures, one answer. A 404 means the configured id is
+    // gone; a 503 or 429 means everything we already knew about is busy.
+    // Either way, ask the key what it can call today and work down that list —
+    // a hardcoded fallback can name a model the key doesn't have, and this
+    // can't. Anything else (a bad request, a rejected key) is the caller's.
+    if (status !== 404 && !TRANSIENT.has(status)) throw err;
 
     let available = [];
     try {
       available = await listGeminiModels(apiKey);
     } catch {
-      /* fall through */
+      /* keep the original failure — the lookup is a bonus, not the point */
     }
-    const fallback = pickGeminiModel(available);
-    if (!fallback || fallback === first) {
+    const chain = rankGeminiModels(available)
+      .filter((m) => !tried.includes(m))
+      .slice(0, 3);
+
+    if (!chain.length) {
+      if (status !== 404) throw err;
       throw new ProviderError(
         503,
         'Gemini model "' + first + '" is not available on this key.' +
@@ -161,9 +188,12 @@ async function callGemini({ apiKey, model, system, schema, parts }) {
       );
     }
 
-    const result = await callGeminiOnce({ ai, model: fallback, system, schema, parts });
-    resolvedGeminiModel = fallback;
-    console.log("[gemini] %s unavailable; using %s", first, fallback);
+    const result = await tryModels(chain, callOnce, { skip404: true });
+    // Only a retired model is worth remembering. An overloaded one will be
+    // back shortly, and pinning this instance to a fallback would outlast the
+    // spike that caused it.
+    if (status === 404) resolvedGeminiModel = result.model;
+    console.log("[gemini] %s failed with %s; using %s", first, status || "?", result.model);
     return result;
   }
 }
