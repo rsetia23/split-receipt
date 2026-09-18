@@ -12,6 +12,7 @@
   "scripts": {
     "bundle": "esbuild js/main.js --bundle --format=iife --outfile=app.js",
     "test": "npm run bundle && node --test test/*.test.js",
+    "coverage": "node --test --experimental-test-coverage test/*.test.js",
     "deploy": "npm run bundle && npx --yes vercel@latest deploy --prod"
   }
 }

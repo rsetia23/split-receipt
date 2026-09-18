@@ -54,6 +54,14 @@ test("404 on a fallback is skipped and the overload error is reported", async ()
   assert.deepEqual(calls, ["a", "a", "b", "c", "c"]);
 });
 
+test("a model that timed out is not retried", async () => {
+  // 504 is what a 15s timeout becomes; a second try would cost another 15s
+  const { calls, callOnce } = fake({ a: [504], b: ["ok"] });
+  const r = await tryModels(["a", "b"], callOnce, { pause: noPause });
+  assert.equal(r.model, "b");
+  assert.deepEqual(calls, ["a", "b"]);
+});
+
 test("a bad request is not retried", async () => {
   const { calls, callOnce } = fake({ a: [400], b: ["ok"] });
   await assert.rejects(tryModels(["a", "b"], callOnce, { pause: noPause }), { status: 400 });

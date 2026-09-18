@@ -110,12 +110,13 @@ const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS || "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-// No new attempt starts after this long, so the chain fits inside the routes'
-// 60s maxDuration with room for the final call to finish. The budget covers
+// No new attempt starts after this long. The worst case is this plus one
+// full attempt (35 + 15 = 50s), inside the routes' 60s maxDuration. At 40s a
+// live scan finished at 54s — too close to a hard kill. The budget covers
 // every chain in one request, including the second pass over the key's own
 // model list — measured from the request, not from each chain, or two passes
 // double it and Vercel kills the function instead.
-const RETRY_WINDOW_MS = 40_000;
+const RETRY_WINDOW_MS = 35_000;
 // The SDK sets no request timeout and does not retry unless asked, so a call
 // that never comes back blocks until the platform kills the whole function.
 // That happened in production: 60s, no answer, nothing logged. Each attempt is
@@ -149,7 +150,10 @@ export async function tryModels(
         }
         lastErr = err;
         if (!TRANSIENT.has(status)) throw err;
-        if (status === 429 || attempt === 1) break;
+        // 429: the quota is per model, so waiting won't refill it. 504: the
+        // model already spent a whole attempt not answering, and a second
+        // try usually costs the same again. Both move straight on.
+        if (status === 429 || status === 504 || attempt === 1) break;
         await pause(700 + Math.random() * 800);
       }
     }
@@ -159,13 +163,18 @@ export async function tryModels(
 
 async function callGemini({ apiKey, model, system, schema, parts }) {
   const ai = new GoogleGenAI({ apiKey, httpOptions: { timeout: ATTEMPT_TIMEOUT_MS } });
+  const started = Date.now();
   const callOnce = async (m) => {
     try {
       return await callGeminiOnce({ ai, model: m, system, schema, parts });
     } catch (err) {
+      const aborted = err?.name === "AbortError" || /abort|timed? ?out/i.test(String(err?.message || ""));
+      // One line per failed attempt: the summary line only names the model
+      // that finally answered, which can't explain where 50 seconds went.
+      const shown = Number(err?.status) || (aborted ? "timeout" : "?");
+      console.log("[gemini] %s → %s at %dms", m, shown, Date.now() - started);
       // An aborted fetch carries no HTTP status, so it would otherwise read as
       // a permanent failure and stop the chain.
-      const aborted = err?.name === "AbortError" || /abort|timed? ?out/i.test(String(err?.message || ""));
       if (aborted && !Number(err?.status)) {
         throw new ProviderError(504, m + " did not answer within " + ATTEMPT_TIMEOUT_MS / 1000 + "s.");
       }
