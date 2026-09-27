@@ -278,3 +278,23 @@ test("an item one person had is not divided by one", () => {
   );
   assert.equal(r.lines.a[0].label, "Espresso: 4.50");
 });
+
+test("a card fee is split in proportion, like tax", () => {
+  // A has 75 of a 100 subtotal, so A carries 75% of the 4 fee.
+  const state = stateOf(
+    [item("1", "Steak", 75, ["a"]), item("2", "Salad", 25, ["b"])],
+    [person("a", "A"), person("b", "B")],
+  );
+  state.fee = { mode: "amt", value: 4 };
+  const r = compute(state);
+  assert.equal(r.fee, 4);
+  assert.equal(r.grand, 104);
+  assert.equal(r.totals.a, 78);
+  assert.equal(r.totals.b, 26);
+});
+
+test("a state saved before fees existed computes with no fee", () => {
+  const r = compute(stateOf([item("1", "Pizza", 20, ["a"])], [person("a", "A")]));
+  assert.equal(r.fee, 0);
+  assert.equal(r.grand, 20);
+});

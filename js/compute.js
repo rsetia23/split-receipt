@@ -6,7 +6,8 @@ import { num } from "./util.js";
  *
  * Each item is divided evenly among the people sharing it. A bill-level
  * discount, then tax and tip, are allocated in proportion to what each person's
- * items came to, and per-person totals are rounded by largest remainder so the
+ * items came to — as is a card surcharge, which scales with the bill the
+ * same way tax does — and per-person totals are rounded by largest remainder so the
  * shares sum to the exact bill rather than drifting a cent.
  */
 export function compute(state) {
@@ -54,7 +55,10 @@ export function compute(state) {
   const base = assigned - discount;
   const tax = state.tax.mode === "pct" ? (base * num(state.tax.value)) / 100 : num(state.tax.value);
   const tip = state.tip.mode === "pct" ? (base * num(state.tip.value)) / 100 : num(state.tip.value);
-  const extra = tax + tip;
+  // Receipts print a card surcharge in dollars, so it has no percentage mode.
+  // Read defensively: a state built before fees existed has no such key.
+  const fee = state.fee ? num(state.fee.value) : 0;
+  const extra = tax + tip + fee;
   const adjust = extra - discount;
 
   const totals = {};
@@ -114,6 +118,7 @@ export function compute(state) {
     base,
     tax,
     tip,
+    fee,
     extra,
     adjust,
     grand: assigned + adjust,

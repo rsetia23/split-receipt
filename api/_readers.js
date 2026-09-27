@@ -32,9 +32,14 @@ export const SCHEMA = {
     },
     tax: { anyOf: [{ type: "number" }, { type: "null" }] },
     tip: { anyOf: [{ type: "number" }, { type: "null" }] },
+    fee: {
+      description:
+        "A card surcharge or non-cash adjustment added on top of the item prices, in dollars.",
+      anyOf: [{ type: "number" }, { type: "null" }],
+    },
     total: { anyOf: [{ type: "number" }, { type: "null" }] },
   },
-  required: ["items", "subtotal", "discount", "tax", "tip", "total"],
+  required: ["items", "subtotal", "discount", "tax", "tip", "fee", "total"],
   additionalProperties: false,
 };
 
@@ -47,8 +52,10 @@ Rules:
 - Write names in Title Case, not the receipt's usual all-caps: "BOUNTY PAPER TOWELS" becomes "Bounty Paper Towels". Preserve casing that is genuinely part of the name — acronyms and short codes stay upper ("TP", "GY"), brands keep their own form ("iPhone", "McDonald's"), and unit suffixes stay as printed ("92OZ").
 - A discount that applies to the whole check — a coupon, a promotion, "20% OFF", a comped amount — goes in "discount" as a positive number of dollars taken off, not as an item. If several such lines are printed, report their sum.
 - A discount attached to one specific line item stays with that item: either as the item's own negative-priced line, exactly as printed, or folded into that item's price if the receipt already shows it net.
-- Do NOT include subtotal, tax, tip, total, change, payment method, card digits, auth codes, loyalty numbers, or store contact details as items. Those belong in the dedicated fields, or nowhere.
-- Report subtotal, discount, tax, tip, and total only if they are printed and legible. Use null for any that are absent — never infer or compute them.
+- Do NOT include subtotal, tax, tip, fee, total, change, payment method, card digits, auth codes, loyalty numbers, or store contact details as items. Those belong in the dedicated fields, or nowhere.
+- Report subtotal, discount, tax, tip, fee, and total only if they are printed and legible. Use null for any that are absent — never infer or compute them.
+- Some receipts print two prices for the same bill — "Total (Cash)" and "Total (Non-cash)", "Cash Price" and "Card Price", or a total plus a "non-cash adjustment" or "card surcharge". Report exactly one set, the one that was actually paid: look at the tender lines near the bottom (card brand, last four digits, "CASH", change given). If no tender is shown, use the non-cash (card) figures. Take subtotal, tax, and total all from that same set — never mix a cash subtotal with a card total. A non-cash adjustment or surcharge line is not an item.
+- If the items are priced at the cash price and the paid (card) total adds a separate surcharge, service fee for card use, or non-cash adjustment on top, report that amount in "fee" as a positive number of dollars. Leave "fee" null when the item prices already include it, when cash was paid, or when no such line is printed.
 - If a price is genuinely unreadable, omit that item rather than guessing. A missing line is recoverable; an invented number is not.`;
 
 /**
@@ -96,6 +103,7 @@ export async function readReceipt({ engine, keys, mediaType, data }) {
     discount: Number.isFinite(parsed.discount) ? Math.abs(parsed.discount) : null,
     tax: numberOrNull(parsed.tax),
     tip: numberOrNull(parsed.tip),
+    fee: Number.isFinite(parsed.fee) ? Math.abs(parsed.fee) : null,
     total: numberOrNull(parsed.total),
     usage,
   };

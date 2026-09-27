@@ -12,6 +12,7 @@ export function seed() {
     tax: { mode: "amt", value: 0 },
     tip: { mode: "amt", value: 0 },
     discount: { mode: "amt", value: 0 },
+    fee: { mode: "amt", value: 0 },
     open: {},
   };
 }
@@ -24,6 +25,7 @@ export function loadState() {
     // Backfilled rather than versioned: a receipt saved before discounts
     // existed is still a valid receipt, and reopening it must not lose it.
     if (!state.discount) state.discount = { mode: "amt", value: 0 };
+    if (!state.fee) state.fee = { mode: "amt", value: 0 };
     return state;
   } catch (e) {
     return seed();

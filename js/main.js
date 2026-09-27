@@ -222,7 +222,13 @@ function updateNote(row, it) {
 }
 
 function renderCharges() {
-  ["tax", "tip", "discount"].forEach(function (k) {
+  // The card fee field stays out of the way until a receipt actually has one;
+  // it stays up while focused so clearing it doesn't yank it from under you.
+  var feeInput = document.getElementById("feeInput");
+  document.getElementById("feeCharge").hidden =
+    !num(state.fee.value) && document.activeElement !== feeInput;
+
+  ["tax", "tip", "discount", "fee"].forEach(function (k) {
     var input = document.querySelector('[data-charge="' + k + '"]');
     if (document.activeElement !== input) {
       input.value = state[k].value === 0 ? "" : String(state[k].value);
@@ -238,6 +244,11 @@ function renderCharges() {
 // sheet, and the picture can't describe the same number three different ways.
 function pctLabel(k) {
   return state[k].mode === "pct" ? " (" + num(state[k].value) + "%)" : "";
+}
+
+// What the proportional extras are called, naming the fee only when there is one.
+function extrasLabel(r, sep) {
+  return r.fee > 0 ? ["tax", "tip", "fee"].join(sep) : ["tax", "tip"].join(sep);
 }
 
 // "(23.09/176.52) * 26.39" — the arithmetic that produced this person's cut of
@@ -270,6 +281,7 @@ function renderReceipt() {
   if (r.discount > 0) line("Discount" + pctLabel("discount"), -r.discount, "credit");
   line("Tax" + pctLabel("tax"), r.tax);
   line("Tip" + pctLabel("tip"), r.tip);
+  if (r.fee > 0) line("Card fee", r.fee);
   line("Total", r.grand, "total");
   receipt.appendChild(tally);
 
@@ -304,7 +316,7 @@ function renderReceipt() {
     left.appendChild(el("div", "split-meta",
       r.lines[id].length + (r.lines[id].length === 1 ? " item" : " items") +
       " · " + Math.round(r.shares[id] * 100) + "% of " +
-      (r.discount > 0 ? "the extras" : "tax+tip")));
+      (r.discount > 0 ? "the extras" : extrasLabel(r, "+"))));
     h.appendChild(left);
     h.appendChild(el("div", "split-amt", money(r.totals[id])));
 
@@ -342,7 +354,7 @@ function renderReceipt() {
       }
 
       var ex = document.createElement("li");
-      ex.appendChild(el("span", null, "tax+tip: " + allocLabel(r, id, r.extra)));
+      ex.appendChild(el("span", null, extrasLabel(r, "+") + ": " + allocLabel(r, id, r.extra)));
       ex.appendChild(el("span", null, money(r.parts[id].extra)));
       ul.appendChild(ex);
 
@@ -799,6 +811,8 @@ document.querySelectorAll("[data-charge]").forEach(function (input) {
   });
 });
 
+document.getElementById("feeInput").addEventListener("blur", renderCharges);
+
 document.querySelectorAll("[data-mode]").forEach(function (btn) {
   btn.addEventListener("click", function () {
     var parts = btn.dataset.mode.split(":");
@@ -957,7 +971,8 @@ function paintSummary(ctx, W, r, draw) {
   y += 24;
   put("Subtotal " + money(r.assigned) +
       (r.discount > 0 ? "   ·   Discount −" + money(r.discount) : "") +
-      "   ·   Tax " + money(r.tax) + "   ·   Tip " + money(r.tip),
+      "   ·   Tax " + money(r.tax) + "   ·   Tip " + money(r.tip) +
+      (r.fee > 0 ? "   ·   Fee " + money(r.fee) : ""),
       pad, '13px ' + MONO, IMG.muted);
 
   y += 22;
@@ -998,7 +1013,7 @@ function paintSummary(ctx, W, r, draw) {
     }
 
     y += 21;
-    put(ellipsize(ctx, "tax+tip: " + allocLabel(r, id, r.extra), labelMax),
+    put(ellipsize(ctx, extrasLabel(r, "+") + ": " + allocLabel(r, id, r.extra), labelMax),
         pad + 16, '13px ' + MONO, IMG.muted);
     put(r.parts[id].extra.toFixed(2), right, '13px ' + MONO, IMG.muted, "right");
 
@@ -1117,7 +1132,7 @@ function showShare() {
   left.appendChild(el("span", "eyebrow", "Total"));
   left.appendChild(el("div", null, money(r.assigned) +
     (r.discount > 0 ? " − " + money(r.discount) + " off" : "") +
-    " + " + money(r.extra) + " tax & tip"));
+    " + " + money(r.extra) + " " + (r.fee > 0 ? "tax, tip & fee" : "tax & tip")));
   head.appendChild(left);
   head.appendChild(el("div", "amt", money(r.grand)));
   sheetBody.appendChild(head);
@@ -1140,7 +1155,7 @@ function showShare() {
       row("discount: " + allocLabel(r, id, r.discount),
           "-" + r.parts[id].discount.toFixed(2), "credit");
     }
-    row("tax+tip: " + allocLabel(r, id, r.extra), r.parts[id].extra.toFixed(2));
+    row(extrasLabel(r, "+") + ": " + allocLabel(r, id, r.extra), r.parts[id].extra.toFixed(2));
     row("total", r.totals[id].toFixed(2), "grand");
 
     block.appendChild(body);
@@ -1515,6 +1530,7 @@ async function readWithAI(bmp, rect) {
     found: {
       tax: body.tax == null ? null : num(body.tax),
       tip: body.tip == null ? null : num(body.tip),
+      fee: body.fee == null ? null : Math.abs(num(body.fee)),
       discount: body.discount == null ? null : Math.abs(num(body.discount)),
       subtotal: body.subtotal == null ? null : num(body.subtotal),
       total: body.total == null ? null : num(body.total),
@@ -1756,8 +1772,8 @@ function showReview(result, previewCanvas, bmp, rect) {
 
   var f = result.found;
   var applyTax = { on: f.tax != null }, applyTip = { on: f.tip != null };
-  var applyDiscount = { on: f.discount != null };
-  if (f.tax != null || f.tip != null || f.discount != null) {
+  var applyDiscount = { on: f.discount != null }, applyFee = { on: f.fee != null };
+  if (f.tax != null || f.tip != null || f.discount != null || f.fee != null) {
     var det = el("div", "detected");
     det.appendChild(el("div", "eyebrow", "Also spotted"));
     var chargeRow = function (label, value, flag) {
@@ -1774,6 +1790,7 @@ function showReview(result, previewCanvas, bmp, rect) {
     if (f.discount != null) chargeRow("Take this off as a discount", f.discount, applyDiscount);
     if (f.tax != null) chargeRow("Use this as tax", f.tax, applyTax);
     if (f.tip != null) chargeRow("Use this as tip", f.tip, applyTip);
+    if (f.fee != null) chargeRow("Add this card fee", f.fee, applyFee);
     sheetBody.appendChild(det);
   }
 
@@ -1817,6 +1834,7 @@ function showReview(result, previewCanvas, bmp, rect) {
     if (f.tax != null && applyTax.on) state.tax = { mode: "amt", value: f.tax };
     if (f.tip != null && applyTip.on) state.tip = { mode: "amt", value: f.tip };
     if (f.discount != null && applyDiscount.on) state.discount = { mode: "amt", value: f.discount };
+    if (f.fee != null && applyFee.on) state.fee = { mode: "amt", value: f.fee };
 
     // The pinned photo earns its space when you're reading it to type items.
     // After an AI read there's nothing left to transcribe, so collapse it and
